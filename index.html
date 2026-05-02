@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aure Relics Battle Grid</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header>
+    <div class="brand">
+      <div class="logo-mark">AR</div>
+
+      <div class="brand-text">
+        <h1>Aure Relics</h1>
+        <div id="currentScene">No Scene Loaded</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN APP LAYOUT -->
+  <div class="app-layout">
+
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar">
+
+    <h3>Tools</h3>
+      <button id="wallTool">Wall</button>
+      <button id="eraseTool">Erase</button>
+      
+      <label for="brushSize">Brush Size</label>
+      <select id="brushSize">
+        <option value="1">1x1</option>
+        <option value="2">2x2</option>
+        <option value="3">3x3</option>
+      </select>
+
+    <h3>Tokens</h3>
+      <button id="playerToken">Player</button>
+      <button id="enemyToken">Enemy</button>
+      <button id="npcToken">NPC</button>
+      <button id="bossToken">Boss</button>
+
+    <h3>Terrain</h3>
+      <button id="treeTool">Tree</button>
+      <button id="rockTool">Rock</button>
+      <button id="fireTool">Fire</button>
+      <button id="doorTool">Door</button>
+      <button id="waterTool">Water</button>
+      <button id="houseTool">House</button>
+      <button id="stairsTool">Stairs</button>
+      <button id="chestTool">Chest</button>
+      <button id="clearGrid">Clear Grid</button>
+
+    <h3>Scenes</h3>
+      <input id="mapName" placeholder="Scene name" />
+      <button id="saveMap">Save Scene</button>
+
+      <select id="mapList">
+        <option value="">Select Scene</option>
+      </select>
+
+      <button id="loadMap">Load Scene</button>
+      <button id="deleteMap">Delete Scene</button>
+
+    </aside>
+
+    <!-- GRID AREA -->
+    <main>
+      <div id="grid"></div>
+    </main>
+
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

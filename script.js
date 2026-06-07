@@ -13,6 +13,15 @@ const houseTool = document.getElementById("houseTool");
 const stairsTool = document.getElementById("stairsTool");
 const chestTool = document.getElementById("chestTool");
 
+const initiativeSetup = document.getElementById("initiativeSetup");
+const initiativeList = document.getElementById("initiativeList");
+const groupSelected = document.getElementById("groupSelected");
+const sortInitiative = document.getElementById("sortInitiative");
+const nextTurn = document.getElementById("nextTurn");
+
+let initiativeEntries = [];
+let currentTurnIndex = 0;
+
 const playerToken = document.getElementById("playerToken");
 const enemyToken = document.getElementById("enemyToken");
 const npcToken = document.getElementById("npcToken");
@@ -24,6 +33,11 @@ let tokenCounters = {
   npc: 1,
   boss: 1
 };
+
+const playerList = document.getElementById("playerList");
+const enemyList = document.getElementById("enemyList");
+const npcList = document.getElementById("npcList");
+const bossList = document.getElementById("bossList");
 
 const saveMap = document.getElementById("saveMap");
 const loadMap = document.getElementById("loadMap");
@@ -63,8 +77,9 @@ clearGrid.onclick = () => {
       player: 1,
       enemy: 1,
       npc: 1,
-      boss: 1
-};
+      boss: 1      
+    };
+    updateRightPanel();
   });
 };
 
@@ -123,6 +138,8 @@ if (currentTool === "erase") {
 
   const token = cell.querySelector(".token");
   if (token) token.remove();
+
+  updateRightPanel();
 }
 
 if (
@@ -174,6 +191,7 @@ if (
     });
 
     cell.appendChild(token);
+    updateRightPanel();
   }
 }
 
@@ -325,6 +343,7 @@ loadMap.onclick = () => {
   currentScene.textContent = name;
 
   alert(`Scene loaded: ${name}`);
+updateRightPanel();
 };
 
 deleteMap.onclick = () => {
@@ -375,16 +394,170 @@ applyTool(cell);
     });
 
     cell.addEventListener("drop", () => {
-      if (draggedToken) {
-        cell.appendChild(draggedToken);
-        draggedToken = null;
-        isMouseDown = false;
+  if (draggedToken) {
+    cell.appendChild(draggedToken);
+    draggedToken = null;
+    isMouseDown = false;
+    updateRightPanel();
   }
 });
 
     grid.appendChild(cell);
   }
 }
+
+function updateRightPanel() {
+  const tokens = document.querySelectorAll(".token");
+
+  const players = [];
+  const enemies = [];
+  const npcs = [];
+  const bosses = [];
+
+  tokens.forEach(token => {
+    const label = token.textContent;
+
+    if (label.startsWith("P")) players.push(label);
+    else if (label.startsWith("E")) enemies.push(label);
+    else if (label.startsWith("N")) npcs.push(label);
+    else if (label.startsWith("B")) bosses.push(label);
+  });
+
+  playerList.textContent = players.join(", ") || "None";
+  enemyList.textContent = enemies.join(", ") || "None";
+  npcList.textContent = npcs.join(", ") || "None";
+  bossList.textContent = bosses.join(", ") || "None";
+
+  updateInitiativeSetup([...players, ...enemies, ...npcs, ...bosses]);
+  cleanInitiativeEntries();
+}
+
+function updateInitiativeSetup(tokenLabels) {
+  initiativeSetup.innerHTML = "";
+
+  tokenLabels.forEach(label => {
+    const row = document.createElement("div");
+    row.classList.add("initiative-row");
+
+    row.innerHTML = `
+      <input type="checkbox" class="initiative-check" value="${label}">
+      <span>${label}</span>
+      <input type="number" class="initiative-input" data-token="${label}" placeholder="Init">
+    `;
+
+    initiativeSetup.appendChild(row);
+  });
+}
+
+function cleanInitiativeEntries() {
+  const existingTokens = Array.from(document.querySelectorAll(".token"))
+    .map(token => token.textContent);
+
+  initiativeEntries = initiativeEntries
+    .map(entry => {
+      const remainingMembers = entry.members.filter(member =>
+        existingTokens.includes(member)
+      );
+
+      return {
+        ...entry,
+        members: remainingMembers,
+        name: remainingMembers.join(" / ")
+      };
+    })
+    .filter(entry => entry.members.length > 0);
+
+  if (currentTurnIndex >= initiativeEntries.length) {
+    currentTurnIndex = 0;
+  }
+
+  renderInitiativeList();
+}
+
+function renderInitiativeList() {
+  initiativeList.innerHTML = "";
+
+  initiativeEntries.forEach((entry, index) => {
+    const row = document.createElement("div");
+    row.classList.add("turn-row");
+
+    if (index === currentTurnIndex) {
+      row.classList.add("active-turn");
+    }
+
+    row.textContent = `${entry.name} — ${entry.initiative}`;
+
+    initiativeList.appendChild(row);
+  });
+}
+
+sortInitiative.onclick = () => {
+  initiativeEntries = [];
+
+  document.querySelectorAll(".initiative-input").forEach(input => {
+    const value = Number(input.value);
+    const token = input.dataset.token;
+
+    if (!input.disabled && input.value !== "") {
+      initiativeEntries.push({
+        name: token,
+        members: [token],
+        initiative: value
+      });
+    }
+  });
+
+  initiativeEntries.sort((a, b) => b.initiative - a.initiative);
+  currentTurnIndex = 0;
+
+  renderInitiativeList();
+};
+
+groupSelected.onclick = () => {
+  const selected = Array.from(document.querySelectorAll(".initiative-check:checked"))
+    .map(check => check.value);
+
+  if (selected.length < 2) {
+    alert("Select at least two tokens to group.");
+    return;
+  }
+
+  const initiativeValue = prompt(`Initiative for ${selected.join(" / ")}:`);
+
+  if (initiativeValue === null || initiativeValue.trim() === "") return;
+
+  initiativeEntries = initiativeEntries.filter(entry =>
+  !entry.members.some(member => selected.includes(member))
+);
+
+  initiativeEntries.push({
+    name: selected.join(" / "),
+    members: selected,
+    initiative: Number(initiativeValue)
+  });
+
+  selected.forEach(label => {
+    const input = document.querySelector(`.initiative-input[data-token="${label}"]`);
+    if (input) input.disabled = true;
+  });
+
+  initiativeEntries.sort((a, b) => b.initiative - a.initiative);
+  currentTurnIndex = 0;
+
+  renderInitiativeList();
+};
+
+nextTurn.onclick = () => {
+  if (initiativeEntries.length === 0) return;
+
+  currentTurnIndex++;
+
+  if (currentTurnIndex >= initiativeEntries.length) {
+    currentTurnIndex = 0;
+  }
+
+  renderInitiativeList();
+};
 
 createGrid();
 refreshMapList();

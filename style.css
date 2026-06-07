@@ -152,6 +152,53 @@ main {
   font-weight: bold;
 }
 
+.right-panel {
+  width: 200px;
+  background: #18130d;
+  border-left: 2px solid #a67c2d;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.right-panel h3 {
+  margin: 10px 0 4px;
+  font-size: 14px;
+  color: #c9a95c;
+}
+
+.right-panel div {
+  font-size: 13px;
+  color: #f5d98b;
+}
+
+.initiative-row,
+.turn-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.initiative-input {
+  width: 55px;
+  margin-left: auto;
+}
+
+.turn-row {
+  padding: 6px;
+  border: 1px solid #4c3b22;
+  background: #21190f;
+}
+
+.active-turn {
+  border-color: #f5d98b;
+  background: #3a2b18;
+  font-weight: bold;
+}
+
 /* GRID AREA */
 main {
   flex: 1;

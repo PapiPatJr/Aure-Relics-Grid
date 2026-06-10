@@ -1,123 +1,216 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f0c09">
   <title>Aure Relics Battle Grid</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <header class="app-header" aria-label="Aure Relics banner">
+    <img
+      class="header-symbol header-symbol-left"
+      src="./images/Logo-symbol.png"
+      alt=""
+      aria-hidden="true"
+    >
 
-  <!-- HEADER -->
-<header>
-  <div class="brand">
-  <img src="./images/Logo-symbol.png" class="brand-symbol" alt="Aure Relics Symbol">
-  <img src="./images/Logo-banner.png" class="brand-banner" alt="Aure Relics">
-</div>
+    <img
+      class="header-brand-banner"
+      src="./images/Logo-banner.png"
+      alt="Aure Relics"
+    >
 
-  <div id="currentScene">No Scene Loaded</div>
-</header>
+    <img
+      class="header-symbol header-symbol-right"
+      src="./images/Logo-symbol.png"
+      alt=""
+      aria-hidden="true"
+    >
+  </header>
 
-  <!-- MAIN APP LAYOUT -->
-<div class="app-layout">
+  <div class="app-layout">
+    <aside class="sidebar" aria-label="Map controls">
+      <details open>
+        <summary>Tools</summary>
+        <button id="wallTool" class="tool-button" type="button">Void Fill</button>
+        <button id="eraseTool" class="tool-button" type="button">Erase</button>
+      </details>
 
-    <!-- LEFT SIDEBAR -->
-<aside class="sidebar">
+      <details open>
+        <summary>Tokens</summary>
+        <button id="playerToken" class="tool-button" type="button">Player</button>
+        <button id="enemyToken" class="tool-button" type="button">Enemy</button>
+        <button id="npcToken" class="tool-button" type="button">NPC</button>
+        <button id="bossToken" class="tool-button" type="button">Boss</button>
+      </details>
 
-  <details open>
-    <summary>Tools</summary>
-    <button id="wallTool">Wall</button>
-    <button id="eraseTool">Erase</button>
-  </details>
+      <div class="brush-control">
+        <label for="brushSize">Brush Size</label>
+        <select id="brushSize">
+          <option value="1">1x1</option>
+          <option value="2">2x2</option>
+          <option value="3">3x3</option>
+        </select>
+      </div>
 
-  <details open>
-    <summary>Tokens</summary>
-    <button id="playerToken">Player</button>
-    <button id="enemyToken">Enemy</button>
-    <button id="npcToken">NPC</button>
-    <button id="bossToken">Boss</button>
-  </details>
+      <details open>
+        <summary>Terrain</summary>
+        <button id="treeTool" class="tool-button" type="button">Tree</button>
+        <button id="rockTool" class="tool-button" type="button">Rock</button>
+        <button id="fireTool" class="tool-button" type="button">Fire</button>
+        <button id="doorTool" class="tool-button" type="button">Door</button>
+        <button id="waterTool" class="tool-button" type="button">Water</button>
+        <button id="houseTool" class="tool-button" type="button">House</button>
+        <button id="stairsTool" class="tool-button" type="button">Stairs</button>
+        <button id="chestTool" class="tool-button" type="button">Chest</button>
+        <button id="clearGrid" type="button">Clear Grid</button>
+      </details>
 
-  <div class="brush-control">
-    <label for="brushSize">Brush Size</label>
-    <select id="brushSize">
-      <option value="1">1x1</option>
-      <option value="2">2x2</option>
-      <option value="3">3x3</option>
-    </select>
+      <details>
+        <summary>Scenes</summary>
+        <input id="mapName" type="text" placeholder="Scene name" aria-label="Scene name" autocomplete="off">
+        <button id="saveMap" type="button">Save Scene</button>
+
+        <select id="mapList" aria-label="Saved scenes">
+          <option value="">Select Scene</option>
+        </select>
+
+        <button id="loadMap" type="button">Load Scene</button>
+        <button id="deleteMap" type="button">Delete Scene</button>
+      </details>
+
+      <details>
+        <summary>Grid Size</summary>
+        <input id="gridWidthInput" type="number" min="5" max="80" value="20" placeholder="Width" aria-label="Grid width">
+        <input id="gridHeightInput" type="number" min="5" max="80" value="20" placeholder="Height" aria-label="Grid height">
+        <button id="applyGridSize" type="button">Apply Grid Size</button>
+      </details>
+    </aside>
+
+    <main class="battle-stage" aria-label="Battlefield">
+      <section class="battlefield-meta" aria-label="Scene information">
+        <div id="currentScene" aria-live="polite">No Scene Loaded</div>
+        <div id="gridInfo" aria-live="polite">20 × 20</div>
+      </section>
+
+      <section id="battlefieldLayout" class="battlefield-layout no-players no-opponents">
+        <aside id="playerStatusBoard" class="hud-rail player-hud-rail" aria-label="Player HUD"></aside>
+
+        <section class="map-region" aria-label="Battle map area">
+          <div class="grid-frame">
+            <div id="grid" aria-label="Battle grid"></div>
+          </div>
+        </section>
+
+        <aside id="enemyStatusStrip" class="hud-rail opponent-hud-rail" aria-label="Enemy, NPC, and boss HUD"></aside>
+      </section>
+    </main>
+
+    <aside class="right-panel" aria-label="Combat tracker">
+      <h3>Combat Tracker</h3>
+
+      <section class="tracker-section tracker-order-section">
+        <h4>Turn Order</h4>
+        <div id="initiativeList" aria-live="polite"></div>
+      </section>
+
+      <button id="nextTurn" class="next-turn-button" type="button">Next Turn</button>
+
+      <details class="initiative-setup-panel" open>
+        <summary>Initiative Setup</summary>
+
+        <div id="initiativeSetup"></div>
+
+        <div class="tracker-actions" aria-label="Initiative setup actions">
+          <button id="groupSelected" type="button">Group Selected</button>
+          <button id="sortInitiative" type="button">Sort Initiative</button>
+        </div>
+      </details>
+
+      <div id="tieResolver" class="tie-resolver hidden">
+        <h3>Tie Breaker</h3>
+        <p>Who has higher Dex or won the roll off?</p>
+        <div id="tieOrderList"></div>
+        <button id="confirmTieOrder" type="button">Confirm Tie Order</button>
+      </div>
+    </aside>
   </div>
 
-  <details open>
-    <summary>Terrain</summary>
-    <button id="treeTool">Tree</button>
-    <button id="rockTool">Rock</button>
-    <button id="fireTool">Fire</button>
-    <button id="doorTool">Door</button>
-    <button id="waterTool">Water</button>
-    <button id="houseTool">House</button>
-    <button id="stairsTool">Stairs</button>
-    <button id="chestTool">Chest</button>
-    <button id="clearGrid">Clear Grid</button>
-  </details>
+  <div id="combatantModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="modalTitle">Edit Combatant</h2>
+        <button id="modalClose" class="icon-button" type="button" aria-label="Close details">×</button>
+      </div>
 
-  <details>
-    <summary>Scenes</summary>
-    <input id="mapName" placeholder="Scene name" />
-    <button id="saveMap">Save Scene</button>
+      <input id="modalTokenLabel" type="hidden">
 
-    <select id="mapList">
-      <option value="">Select Scene</option>
-    </select>
+      <div class="modal-grid-row modal-identity-row">
+        <label class="modal-field">
+          Name
+          <input id="modalName" type="text" autocomplete="off">
+        </label>
 
-    <button id="loadMap">Load Scene</button>
-    <button id="deleteMap">Delete Scene</button>
-  </details>
+        <label class="modal-field">
+          Class / Role
+          <input id="modalClass" type="text" autocomplete="off" placeholder="Warlock">
+        </label>
+      </div>
 
-  <details>
-    <summary>Grid Size</summary>
-    <input id="gridWidthInput" type="number" min="5" max="80" value="20" placeholder="Width">
-    <input id="gridHeightInput" type="number" min="5" max="80" value="20" placeholder="Height">
-    <button id="applyGridSize">Apply Grid Size</button>
-  </details>
+      <div class="modal-grid-row">
+        <label class="modal-field">
+          Current HP
+          <input id="modalHp" type="text" inputmode="numeric" autocomplete="off">
+        </label>
 
-</aside>
+        <label class="modal-field">
+          Max HP
+          <input id="modalMaxHp" type="text" inputmode="numeric" autocomplete="off">
+        </label>
 
-    <!-- GRID AREA -->
-<main class="grid-stage">
+        <label class="modal-field">
+          Temp HP
+          <input id="modalTempHp" type="text" inputmode="numeric" autocomplete="off">
+        </label>
+      </div>
 
-  <section id="playerStatusBoard" class="player-status-board"></section>
+      <label class="modal-field">
+        Status
+        <select id="modalStatus"></select>
+      </label>
 
-  <div class="grid-frame">
-  <div id="grid"></div>
-  </div>
+      <label class="modal-field">
+        Buff / Debuff
+        <select id="modalBuff"></select>
+      </label>
 
-  <section id="enemyStatusStrip" class="enemy-status-strip"></section>
+      <fieldset class="modal-visibility-options">
+        <legend>Table Visibility</legend>
 
-</main>
+        <label>
+          <input id="modalShowHp" type="checkbox">
+          Show HP on table view
+        </label>
 
-    <!-- RIGHT PANEL -->
-  <aside class="right-panel">
+        <label>
+          <input id="modalShowStatus" type="checkbox">
+          Show status/debuff on table view
+        </label>
 
-    <h3>Combat Tracker</h3>
+        <label>
+          <input id="modalShowBuff" type="checkbox">
+          Show buff on table view
+        </label>
+      </fieldset>
 
-    <div id="initiativeSetup"></div>
-
-    <button id="groupSelected">Group Selected</button>
-    <button id="sortInitiative">Sort Initiative</button>
-    <button id="nextTurn">Next Turn</button>
-
-    <div id="initiativeList"></div>
-
-    <div id="tieResolver" class="tie-resolver hidden">
-      <h3>Tie Breaker</h3>
-      <p>Who has higher Dex or won the roll off?</p>
-      <div id="tieOrderList"></div>
-      <button id="confirmTieOrder">Confirm Tie Order</button>
+      <div class="modal-actions">
+        <button id="modalSave" type="button">Save Details</button>
+        <button id="modalCancel" type="button">Cancel</button>
+      </div>
     </div>
-
-  </aside>
-
-</div>
+  </div>
 
   <script src="script.js"></script>
 </body>

@@ -9,84 +9,96 @@
 <body>
 
   <!-- HEADER -->
-  <header>
-    <div class="brand">
-      <div class="logo-mark">AR</div>
+<header>
+  <div class="brand">
+  <img src="./images/Logo-symbol.png" class="brand-symbol" alt="Aure Relics Symbol">
+  <img src="./images/Logo-banner.png" class="brand-banner" alt="Aure Relics">
+</div>
 
-      <div class="brand-text">
-        <h1>Aure Relics</h1>
-        <div id="currentScene">No Scene Loaded</div>
-      </div>
-    </div>
-  </header>
+  <div id="currentScene">No Scene Loaded</div>
+</header>
 
   <!-- MAIN APP LAYOUT -->
-  <div class="app-layout">
+<div class="app-layout">
 
     <!-- LEFT SIDEBAR -->
-    <aside class="sidebar">
+<aside class="sidebar">
 
-    <h3>Tools</h3>
-      <button id="wallTool">Wall</button>
-      <button id="eraseTool">Erase</button>
-      
-      <label for="brushSize">Brush Size</label>
-      <select id="brushSize">
-        <option value="1">1x1</option>
-        <option value="2">2x2</option>
-        <option value="3">3x3</option>
-      </select>
+  <details open>
+    <summary>Tools</summary>
+    <button id="wallTool">Wall</button>
+    <button id="eraseTool">Erase</button>
+  </details>
 
-    <h3>Tokens</h3>
-      <button id="playerToken">Player</button>
-      <button id="enemyToken">Enemy</button>
-      <button id="npcToken">NPC</button>
-      <button id="bossToken">Boss</button>
+  <details open>
+    <summary>Tokens</summary>
+    <button id="playerToken">Player</button>
+    <button id="enemyToken">Enemy</button>
+    <button id="npcToken">NPC</button>
+    <button id="bossToken">Boss</button>
+  </details>
 
-    <h3>Terrain</h3>
-      <button id="treeTool">Tree</button>
-      <button id="rockTool">Rock</button>
-      <button id="fireTool">Fire</button>
-      <button id="doorTool">Door</button>
-      <button id="waterTool">Water</button>
-      <button id="houseTool">House</button>
-      <button id="stairsTool">Stairs</button>
-      <button id="chestTool">Chest</button>
-      <button id="clearGrid">Clear Grid</button>
+  <div class="brush-control">
+    <label for="brushSize">Brush Size</label>
+    <select id="brushSize">
+      <option value="1">1x1</option>
+      <option value="2">2x2</option>
+      <option value="3">3x3</option>
+    </select>
+  </div>
 
-    <h3>Scenes</h3>
-      <input id="mapName" placeholder="Scene name" />
-      <button id="saveMap">Save Scene</button>
+  <details open>
+    <summary>Terrain</summary>
+    <button id="treeTool">Tree</button>
+    <button id="rockTool">Rock</button>
+    <button id="fireTool">Fire</button>
+    <button id="doorTool">Door</button>
+    <button id="waterTool">Water</button>
+    <button id="houseTool">House</button>
+    <button id="stairsTool">Stairs</button>
+    <button id="chestTool">Chest</button>
+    <button id="clearGrid">Clear Grid</button>
+  </details>
 
-      <select id="mapList">
-        <option value="">Select Scene</option>
-      </select>
+  <details>
+    <summary>Scenes</summary>
+    <input id="mapName" placeholder="Scene name" />
+    <button id="saveMap">Save Scene</button>
 
-      <button id="loadMap">Load Scene</button>
-      <button id="deleteMap">Delete Scene</button>
+    <select id="mapList">
+      <option value="">Select Scene</option>
+    </select>
 
-    </aside>
+    <button id="loadMap">Load Scene</button>
+    <button id="deleteMap">Delete Scene</button>
+  </details>
+
+  <details>
+    <summary>Grid Size</summary>
+    <input id="gridWidthInput" type="number" min="5" max="80" value="20" placeholder="Width">
+    <input id="gridHeightInput" type="number" min="5" max="80" value="20" placeholder="Height">
+    <button id="applyGridSize">Apply Grid Size</button>
+  </details>
+
+</aside>
 
     <!-- GRID AREA -->
-  <main>
-      <div id="grid"></div>
-  </main>
+<main class="grid-stage">
 
+  <section id="playerStatusBoard" class="player-status-board"></section>
+
+  <div class="grid-frame">
+  <div id="grid"></div>
+  </div>
+
+  <section id="enemyStatusStrip" class="enemy-status-strip"></section>
+
+</main>
+
+    <!-- RIGHT PANEL -->
   <aside class="right-panel">
 
-    <h3>Players</h3>
-    <div id="playerList"></div>
-
-    <h3>Enemies</h3>
-    <div id="enemyList"></div>
-
-    <h3>NPCs</h3>
-    <div id="npcList"></div>
-
-    <h3>Bosses</h3>
-    <div id="bossList"></div>
-
-    <h3>Initiative</h3>
+    <h3>Combat Tracker</h3>
 
     <div id="initiativeSetup"></div>
 
@@ -95,6 +107,13 @@
     <button id="nextTurn">Next Turn</button>
 
     <div id="initiativeList"></div>
+
+    <div id="tieResolver" class="tie-resolver hidden">
+      <h3>Tie Breaker</h3>
+      <p>Who has higher Dex or won the roll off?</p>
+      <div id="tieOrderList"></div>
+      <button id="confirmTieOrder">Confirm Tie Order</button>
+    </div>
 
   </aside>
 

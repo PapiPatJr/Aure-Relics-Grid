@@ -185,6 +185,29 @@ button:hover {
   margin-top: 6px;
 }
 
+.sidebar-link {
+  width: 100%;
+  min-height: 38px;
+  margin-top: 6px;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gold);
+  border-radius: 4px;
+  background: #2b2115;
+  color: var(--gold-bright);
+  text-align: center;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sidebar-link:hover {
+  background: #3a2b18;
+  box-shadow: 0 0 8px rgba(245, 217, 139, 0.25);
+}
+
 .brush-control {
   display: grid;
   gap: 6px;

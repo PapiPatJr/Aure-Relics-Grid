@@ -30,15 +30,16 @@
     >
   </header>
 
-  <div class="app-layout">
-    <aside class="sidebar" aria-label="Map controls">
-      <details open>
+  <div id="appLayout" class="app-layout">
+    <aside id="sidebarPanel" class="sidebar" aria-label="Map controls">
+      <button id="toggleSidebar" class="panel-collapse-button panel-collapse-left" type="button" aria-label="Collapse map controls" title="Collapse map controls">‹</button>
+      <details>
         <summary>Tools</summary>
         <button id="wallTool" class="tool-button" type="button">Void Fill</button>
         <button id="eraseTool" class="tool-button" type="button">Erase</button>
       </details>
 
-      <details open>
+      <details>
         <summary>Tokens</summary>
         <button id="playerToken" class="tool-button" type="button">Player</button>
         <button id="enemyToken" class="tool-button" type="button">Enemy</button>
@@ -55,7 +56,7 @@
         </select>
       </div>
 
-      <details open>
+      <details>
         <summary>Terrain</summary>
         <button id="treeTool" class="tool-button" type="button">Tree</button>
         <button id="rockTool" class="tool-button" type="button">Rock</button>
@@ -65,7 +66,32 @@
         <button id="houseTool" class="tool-button" type="button">House</button>
         <button id="stairsTool" class="tool-button" type="button">Stairs</button>
         <button id="chestTool" class="tool-button" type="button">Chest</button>
+        <button id="treeCanopyTool" class="tool-button" type="button">Tree Canopy</button>
+        <button id="boulderTool" class="tool-button" type="button">Boulder</button>
+        <button id="stoneFormationTool" class="tool-button" type="button">Stone Formation</button>
+        <button id="brushThicketTool" class="tool-button" type="button">Brush Thicket</button>
+        <button id="ruinedWallTool" class="tool-button" type="button">Ruined Wall</button>
+        <button id="stonePillarTool" class="tool-button" type="button">Stone Pillar</button>
+        <button id="crateStackTool" class="tool-button" type="button">Crate Stack</button>
+        <button id="pondTool" class="tool-button" type="button">Pond / Pool</button>
         <button id="clearGrid" type="button">Clear Grid</button>
+      </details>
+
+      <details>
+        <summary>Scene Theme</summary>
+        <label class="sidebar-field" for="sceneTheme">
+          Battlefield Background
+          <select id="sceneTheme" aria-label="Battlefield background theme">
+            <option value="relic">Relic Default</option>
+            <option value="stoneDungeon">Stone Dungeon</option>
+            <option value="forestFloor">Forest Floor</option>
+            <option value="sandDesert">Sand / Desert</option>
+            <option value="iceField">Ice Field</option>
+            <option value="hellEmber">Hell / Ember</option>
+            <option value="cityCobblestone">City / Cobblestone</option>
+          </select>
+        </label>
+        <button id="resetSceneTheme" type="button">Reset Theme</button>
       </details>
 
       <details>
@@ -79,6 +105,15 @@
 
         <button id="loadMap" type="button">Load Scene</button>
         <button id="deleteMap" type="button">Delete Scene</button>
+        <button id="exportData" type="button">Export Backup</button>
+        <button id="importData" type="button">Import Backup</button>
+        <input id="importDataFile" class="visually-hidden" type="file" accept="application/json,.json" aria-label="Import Aure Relics backup file">
+      </details>
+
+      <details>
+        <summary>Help / Tutorial</summary>
+        <a class="sidebar-link" href="./Aure-Relics-Tutorial.md" target="_blank" rel="noopener">Open Tutorial</a>
+        <a class="sidebar-link" href="./README.md" target="_blank" rel="noopener">Open README</a>
       </details>
 
       <details>
@@ -86,16 +121,6 @@
         <input id="gridWidthInput" type="number" min="5" max="80" value="20" placeholder="Width" aria-label="Grid width">
         <input id="gridHeightInput" type="number" min="5" max="80" value="20" placeholder="Height" aria-label="Grid height">
         <button id="applyGridSize" type="button">Apply Grid Size</button>
-      </details>
-
-      <details>
-        <summary>Help / Tutorial</summary>
-        <a class="sidebar-link" href="./Aure-Relics-Tutorial.md" target="_blank" rel="noopener">
-        Open Tutorial
-        </a>
-        <a class="sidebar-link" href="./README.md" target="_blank" rel="noopener">
-        Open README
-        </a>
       </details>
     </aside>
 
@@ -118,17 +143,18 @@
       </section>
     </main>
 
-    <aside class="right-panel" aria-label="Combat tracker">
+    <aside id="rightPanel" class="right-panel" aria-label="Combat tracker">
+      <button id="toggleTracker" class="panel-collapse-button panel-collapse-right" type="button" aria-label="Collapse combat tracker" title="Collapse combat tracker">›</button>
       <h3>Combat Tracker</h3>
 
-      <section class="tracker-section tracker-order-section">
-        <h4>Turn Order</h4>
+      <details id="turnOrderPanel" class="turn-order-panel tracker-section tracker-order-section">
+        <summary>Turn Order</summary>
         <div id="initiativeList" aria-live="polite"></div>
-      </section>
+      </details>
 
       <button id="nextTurn" class="next-turn-button" type="button">Next Turn</button>
 
-      <details class="initiative-setup-panel" open>
+      <details class="initiative-setup-panel">
         <summary>Initiative Setup</summary>
 
         <div id="initiativeSetup"></div>
@@ -136,6 +162,7 @@
         <div class="tracker-actions" aria-label="Initiative setup actions">
           <button id="groupSelected" type="button">Group Selected</button>
           <button id="sortInitiative" type="button">Sort Initiative</button>
+          <button id="clearInitiative" type="button">Clear Initiative</button>
         </div>
       </details>
 
@@ -147,6 +174,25 @@
       </div>
     </aside>
   </div>
+
+  <section id="dmWorkspace" class="dm-workspace collapsed" aria-label="DM notes and history">
+    <div class="dm-workspace-header">
+      <div class="dm-workspace-tabs" role="tablist" aria-label="DM workspace tabs">
+        <button id="dmNotesTab" class="dm-tab active" type="button">DM Notes</button>
+        <button id="dmHistoryTab" class="dm-tab" type="button">History</button>
+      </div>
+      <button id="toggleDmWorkspace" class="dm-workspace-toggle" type="button" aria-label="Expand DM workspace">DM Panel ▲</button>
+    </div>
+
+    <div id="dmNotesPanel" class="dm-panel active">
+      <textarea id="dmNotesText" placeholder="Session notes, lore, reminders, enemy plans, loot, secrets..." aria-label="DM notes"></textarea>
+    </div>
+
+    <div id="dmHistoryPanel" class="dm-panel">
+      <div id="dmHistoryLog" class="dm-history-log" aria-live="polite"></div>
+    </div>
+  </section>
+
 
   <div id="combatantModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal-card">
@@ -198,6 +244,11 @@
 
       <fieldset class="modal-visibility-options">
         <legend>Table Visibility</legend>
+
+        <label>
+          <input id="modalShowRole" type="checkbox">
+          Show class/role on table view
+        </label>
 
         <label>
           <input id="modalShowHp" type="checkbox">

@@ -6,7 +6,43 @@ The app is designed for DMs who want a simple visual battle map for in-person ta
 
 ---
 
-## Section 1 — Tools
+## 1. Offline Setup
+
+The app is built to run from local files.
+
+Recommended release folder:
+
+```text
+index.html
+style.css
+script.js
+README.md
+Aure-Relics-Tutorial.md
+images/
+  Logo-symbol.png
+  Logo-banner.png
+fonts/
+  Cinzel-VariableFont_wght.ttf
+  Spectral-Regular.ttf
+  Spectral-SemiBold.ttf
+  Spectral-Bold.ttf
+  LICENSE-Cinzel-OFL.txt
+  LICENSE-Spectral-OFL.txt
+  README-FONTS.md
+```
+
+To play offline:
+
+1. Download or copy the full project folder.
+2. Keep `index.html`, `style.css`, `script.js`, `/images`, and `/fonts` together.
+3. Open `index.html` in a modern browser.
+4. Save/load scenes normally in that browser profile.
+
+If any `/fonts` file listed above is missing, the app still works, but that font weight may fall back to system fonts. For release, keep all four `.ttf` files and both license files in `/fonts`.
+
+---
+
+## 2. Tools
 
 The **Tools** section controls basic map editing.
 
@@ -31,31 +67,49 @@ How to use:
 
 ### Erase
 
-Use **Erase** to remove content from grid squares.
+Use **Erase** to remove content.
 
-Erase removes:
+Erase can remove:
 
 - void fill
-- terrain icons
+- grid terrain icons
+- freeform terrain objects
 - tokens
-
-How to use:
-
-1. Click **Erase**.
-2. Click a square to clear it.
-3. Click and drag to erase multiple squares.
 
 Be careful: erasing a token removes that combatant from the HUD and initiative tools.
 
 ---
 
-## Section 2 — Tokens
+## 3. Scene Theme
+
+Use **Scene Theme** to change the battlefield background.
+
+Available themes:
+
+- Relic Default
+- Stone Dungeon
+- Forest Floor
+- Sand / Desert
+- Ice Field
+- Hell / Ember
+- City / Cobblestone
+
+How to use:
+
+1. Open **Scene Theme**.
+2. Choose a battlefield background.
+3. Build or load your scene.
+4. Save the scene to preserve the selected theme.
+
+Scene themes affect the battlefield and grid, not the Aure Relics header or core brand colors.
+
+---
+
+## 4. Tokens
 
 Tokens represent players, enemies, NPCs, and bosses on the grid.
 
-### Token Types
-
-The app currently supports four token types:
+Token types:
 
 - **Player**: `P1`, `P2`, `P3`, etc.
 - **Enemy**: `E1`, `E2`, `E3`, etc.
@@ -72,30 +126,18 @@ The app currently supports four token types:
 ### Moving Tokens
 
 1. Click and drag a token.
-2. Drop it onto another grid square.
+2. Drop it onto another empty grid square. Dropping onto an occupied square leaves both tokens in their original positions.
 3. The HUD and initiative tools stay connected to that token.
 
-### Player HUD Cards
+---
+
+## 5. HUD Cards
 
 Player cards appear on the left side of the battle area.
 
-Each player card can show:
+Enemy, NPC, and boss cards appear on the right side.
 
-- token ID
-- character name
-- class or role
-- current HP
-- max HP
-- temporary HP
-- health bar
-- status, buff, or debuff references
-- active-turn glow when it is that player's turn
-
-### Editing Player Details
-
-Use the small cog button on the player card.
-
-The detail window allows editing:
+Use the cog button to edit:
 
 - name
 - class / role
@@ -104,49 +146,48 @@ The detail window allows editing:
 - temporary HP
 - status
 - buff / debuff
+- table visibility options
 
-Recommended setup:
+### Enemy Visibility
 
-1. Place the player token.
-2. Click the cog.
-3. Enter the character name.
-4. Enter class or role.
-5. Enter max HP.
-6. Save details.
+For enemies, NPCs, and bosses, the DM can choose what appears to players:
 
-After setup, most combat updates can be done directly from the compact player card by adjusting current HP or temp HP.
+- Show class/role
+- Show HP
+- Show status/debuff
+- Show buff
 
-### Enemy, NPC, and Boss HUD Cards
+If **Show class/role** is checked and a class/role is entered, it replaces the default label on the card.
 
-Enemies, NPCs, and bosses appear on the right side.
+Example:
 
-Visual styles:
+```text
+E1 Goblin    ENEMY
+```
 
-- enemies use a rustic orange style
-- NPCs use a forest green style
-- bosses use a stronger evil red boss style
+With class/role `Archer` and Show class/role checked:
 
-Bosses are prioritized near the top of the opponent rail so they stand out.
+```text
+E1 Goblin    ARCHER
+```
 
-### Enemy and Boss Visibility
+### Death / Skull Button
 
-The DM can enter enemy/boss information without revealing all of it on the table view.
+Use the skull/death control on a HUD card to mark a combatant dead and remove it from initiative.
 
-Open the cog on an enemy, NPC, or boss card to choose whether to show:
-
-- HP
-- status / debuff
-- buff
-
-This lets the DM track details privately while only showing the table what makes sense.
+The combatant stays on the grid as a dead/greyed-out marker until restored or erased.
 
 ---
 
-## Section 3 — Terrain
+## 6. Terrain
 
-The **Terrain** section places simple visual markers on grid squares.
+The **Terrain** section has two types of terrain.
 
-Current terrain tools include:
+### Grid Terrain
+
+Grid terrain is placed directly inside a square.
+
+Grid terrain tools include:
 
 - Tree
 - Rock
@@ -157,20 +198,43 @@ Current terrain tools include:
 - Stairs
 - Chest
 
-How to use terrain:
+How to use:
 
 1. Click a terrain tool.
 2. Click a grid square.
-3. The terrain icon appears on that square.
+3. The icon appears on that square.
 4. Use Erase to remove it.
 
-Current terrain is grid-based. Freeform draggable and resizable terrain objects are planned for a future update.
+### Freeform Terrain
+
+Freeform terrain creates larger objects that can be moved and resized.
+
+Freeform terrain objects include:
+
+- Tree Canopy
+- Boulder
+- Stone Formation
+- Brush Thicket
+- Ruined Wall
+- Stone Pillar
+- Crate Stack
+- Pond / Pool
+
+How to use:
+
+1. Click a freeform terrain tool.
+2. Click the grid to place it.
+3. Drag the object to move it.
+4. Drag the corner handle to resize it.
+5. Use Erase and click the object to remove it.
+
+Freeform terrain saves and loads with the scene.
 
 ---
 
-## Section 4 — Brush Size
+## 7. Brush Size
 
-Brush Size controls how many grid squares are affected when painting void fill, erasing, or placing terrain.
+Brush Size controls how many grid squares are affected when painting void fill, erasing, or placing grid terrain.
 
 Options:
 
@@ -178,29 +242,28 @@ Options:
 - `2x2`
 - `3x3`
 
-Use larger brush sizes for:
-
-- filling big blocked areas
-- clearing larger sections
-- quickly roughing out a map
+Use larger brush sizes for filling or clearing large areas quickly.
 
 ---
 
-## Section 5 — Scenes
+## 8. Scenes
 
 Scenes let you save and reload maps.
 
 A scene can include:
 
 - grid size
+- selected battlefield theme
 - void fill
-- terrain
+- grid terrain
+- freeform terrain
 - tokens
 - names
 - HP and temp HP
 - class / role
 - status and buff data
 - enemy/boss visibility settings
+- initiative groups
 - initiative entries
 - current turn position
 
@@ -210,7 +273,6 @@ A scene can include:
 2. Type a scene name.
 3. Click **Save Scene**.
 4. The scene is stored in your browser.
-5. The manual scene-name box clears after saving.
 
 If you save over an existing scene name, the app asks before overwriting.
 
@@ -219,9 +281,7 @@ If you save over an existing scene name, the app asks before overwriting.
 1. Open **Scenes**.
 2. Choose a saved scene from the dropdown.
 3. Click **Load Scene**.
-4. The map, tokens, HUD, grid size, and combat data load.
-
-The selected scene stays visible in the dropdown after loading.
+4. The map, tokens, HUD, theme, grid size, terrain, and combat data load.
 
 ### Deleting a Scene
 
@@ -231,20 +291,35 @@ The selected scene stays visible in the dropdown after loading.
 
 Deleted scenes cannot be restored unless you have a backup.
 
-### Important Note About Scene Storage
+---
 
-Scenes are saved using browser local storage.
+## 9. Export / Import Backup
 
-That means:
+Scenes are stored in browser local storage. Use backups to protect your work.
 
-- saved scenes stay on that browser/device
-- clearing browser storage may delete saved scenes
-- scenes do not sync across devices yet
-- private/incognito windows may not preserve saved scenes
+### Export Backup
+
+1. Open **Scenes**.
+2. Click **Export Backup**.
+3. Save the `.json` file somewhere safe.
+
+### Import Backup
+
+1. Open **Scenes**.
+2. Click **Import Backup**.
+3. Choose an Aure Relics backup `.json` file.
+4. Confirm the import.
+
+Backups are useful for:
+
+- moving scenes to another device
+- protecting against browser data clearing
+- testing new releases
+- offline play prep
 
 ---
 
-## Section 6 — Grid Size
+## 10. Grid Size
 
 Use **Grid Size** to change map dimensions.
 
@@ -266,33 +341,44 @@ Examples:
 
 ---
 
-## Section 7 — Combat Tracker
+## 11. Combat Tracker
 
 The Combat Tracker manages turn order.
 
 ### Initiative Setup
 
-The **Initiative Setup** section can be opened or collapsed.
-
-Use it to:
+Use Initiative Setup to:
 
 - enter initiative values
 - select tokens for grouping
-- group enemies together
+- prepare enemy groups
 - sort initiative
 
-### Entering Initiative
+### Grouping Initiative
 
-1. Place tokens on the grid.
-2. Enter initiative values next to the tokens.
-3. Click **Sort Initiative**.
-4. The turn order list appears above the setup section.
+Use grouping when multiple combatants act on the same turn.
 
-### Turn Order
+How to group:
 
-The compact turn order list shows the sorted order after initiative is sorted.
+1. Check the boxes next to the tokens.
+2. Click **Group Selected**.
+3. A group row appears in Initiative Setup.
+4. Enter one initiative value for the group.
+5. Click **Sort Initiative**.
 
-The active turn is highlighted.
+### Sort Initiative
+
+After initiative is sorted:
+
+- Turn Order opens
+- Initiative Setup closes
+- active turn highlighting becomes available
+
+### Tie Breaker
+
+If multiple combatants have the same initiative, the tie breaker appears.
+
+Use the arrows to set the correct order, then confirm.
 
 ### Next Turn
 
@@ -302,97 +388,69 @@ When a combatant becomes active:
 
 - the turn order row highlights
 - the token on the grid glows
-- the matching player/enemy/NPC/boss card glows and shimmers
-
-### Grouping Initiative
-
-Use grouping when multiple combatants act on the same turn.
-
-Example:
-
-- E1 Goblin
-- E2 Goblin
-- E3 Goblin
-
-How to group:
-
-1. Check the boxes next to the tokens.
-2. Click **Group Selected**.
-3. Enter one initiative value.
-4. The group acts together in turn order.
-
-### Tie Breaker
-
-If multiple combatants have the same initiative, the tie breaker appears.
-
-Use the arrows to set the correct order, then confirm.
+- the matching HUD card glows
 
 ---
 
-## Section 8 — Active Turn Indicators
+## 12. DM Notes and History
 
-The app uses multiple visual cues for the active turn.
+The bottom DM panel includes:
 
-When a combatant is active:
+- **DM Notes** for session notes, enemy plans, lore, loot, and reminders
+- **History** for recent moves, saves, edits, and turn changes
 
-- the token glows on the grid
-- the HUD card glows and shimmers
-- the initiative row highlights
+The DM panel can be collapsed to keep the battlefield clear.
 
-The separate turn banner was removed to keep the grid larger and reduce clutter.
+Notes and history are stored locally in the browser and included in backup exports.
 
 ---
 
-## Section 9 — Recommended DM Workflow
+## 13. Recommended DM Workflow
 
 A simple encounter setup flow:
 
 1. Set grid size.
-2. Use Void Fill to block off unusable space.
-3. Add terrain markers.
-4. Place player tokens.
-5. Open player cogs and enter names, classes, max HP, and starting HP.
-6. Place enemies, NPCs, and bosses.
-7. Open enemy/boss cogs and enter any private details.
-8. Choose which enemy/boss details should be visible.
-9. Save the scene.
-10. Enter initiative.
-11. Sort initiative.
-12. Collapse Initiative Setup.
+2. Choose a scene theme.
+3. Use Void Fill to block off unusable space.
+4. Add grid terrain and freeform terrain.
+5. Place player tokens.
+6. Enter player names, classes, max HP, and starting HP.
+7. Place enemies, NPCs, and bosses.
+8. Enter private enemy/boss details.
+9. Choose which enemy/boss details should be visible.
+10. Save the scene.
+11. Enter initiative or create groups.
+12. Sort initiative.
 13. Use Next Turn during combat.
+14. Export a backup after major scene work.
 
 ---
 
-## Section 10 — Current Limitations
+## 14. Current Limitations
 
 Current limitations:
 
-- terrain is still grid-locked
-- terrain cannot yet be freely dragged or resized
 - no grid-line wall/door builder yet
 - no AoE, cone, radius, line-of-sight, or range tools yet
 - saved scenes are local to the browser
 - no multiplayer hosting yet
-
-These are planned for future versions.
+- no campaign folder system yet
+- no fog of war yet
 
 ---
 
-## Planned Advanced Features
+## 15. Planned Advanced Features
 
 Future upgrades may include:
 
-- freeform tree canopies
-- resizable rocks and terrain props
-- stone formations and boulders
+- campaign folders
 - walls and doors on grid lines
 - dungeon and building construction tools
 - AoE templates
 - cones and line attacks
 - line of sight tools
 - range rulers
-- temporary markers
-- clear overlay tools
+- hidden/revealed object notes
 - fog of war
 - player-facing display modes
 - multiplayer host/player sessions

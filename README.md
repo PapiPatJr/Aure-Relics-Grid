@@ -4,8 +4,8 @@ A lightweight browser-based tabletop grid for Dungeons & Dragons and other grid-
 
 Aure Relics Digital Tabletop Grid is built for DMs who want a clean visual battle map on a TV, monitor, tablet, or shared screen while keeping the feel of in-person tabletop play.
 
-> **Current status:** Alpha / Release Candidate  
-> The app is actively being tested and expanded.
+> **Current status:** v0.5.2-alpha / Release Candidate  
+> This build focuses on terrain, scene themes, offline readiness, and updated documentation.
 
 ---
 
@@ -19,10 +19,49 @@ Aure Relics Digital Tabletop Grid helps DMs:
 - manage compact combat HUD cards
 - track initiative and active turns
 - hide or show enemy information at the DM's discretion
+- place grid terrain and freeform terrain objects
+- choose battlefield background themes
+- keep session notes and recent history
+- export and import local backup files
 
 The app runs directly in the browser with plain HTML, CSS, and JavaScript.
 
-No install, account, backend, or build process is currently required.
+No account, backend, cloud service, or build process is currently required.
+
+---
+
+## Offline Play
+
+The app is designed to work offline after the project folder is downloaded.
+
+The release folder should include:
+
+```text
+index.html
+style.css
+script.js
+README.md
+Aure-Relics-Tutorial.md
+images/
+  Logo-symbol.png
+  Logo-banner.png
+fonts/
+  Cinzel-VariableFont_wght.ttf
+  Spectral-Regular.ttf
+  Spectral-SemiBold.ttf
+  Spectral-Bold.ttf
+  LICENSE-Cinzel-OFL.txt
+  LICENSE-Spectral-OFL.txt
+  README-FONTS.md
+```
+
+The app should not require online fonts, CDN scripts, hosted images, or external assets.
+
+### Local Fonts
+
+The CSS is wired for these exact local `.ttf` font files in the `/fonts/` folder. This keeps the same Aure Relics look offline instead of falling back to generic fonts.
+
+If any listed font file is missing, the browser will use fallback serif fonts for that weight. The app still works, but the visual style will not fully match the intended offline release.
 
 ---
 
@@ -35,11 +74,12 @@ No install, account, backend, or build process is currently required.
 - Click-and-drag painting
 - Brush sizes: `1x1`, `2x2`, and `3x3`
 - Grid scaling designed for small screens and large monitor/TV display
+- Grid frame hugs the active grid instead of wasting dead space
 
 ### Tools
 
 - **Void Fill** for blocked-off, hidden, or inaccessible map space
-- **Erase** for clearing void fill, terrain, and tokens
+- **Erase** for clearing void fill, terrain, freeform objects, and tokens
 - Clear Grid confirmation to prevent accidental wipes
 
 ### Tokens
@@ -55,8 +95,6 @@ Tokens can be placed on the grid, moved by drag-and-drop, and linked to HUD card
 
 ### Compact HUD Cards
 
-The app uses compact side HUD cards instead of large form-style character panels.
-
 Player HUD cards can show:
 
 - token ID
@@ -67,17 +105,18 @@ Player HUD cards can show:
 - temporary HP
 - health bar
 - active status or buff references
-- active-turn glow and shimmer
+- active-turn glow
 
 Enemy, NPC, and boss cards can show:
 
 - token ID
 - name
-- type
+- default type label
+- optional class / role label
 - optional HP
 - optional status/debuff
 - optional buff
-- active-turn glow and shimmer
+- active-turn glow
 
 Bosses use a stronger red visual style and are prioritized in the opponent rail.
 
@@ -87,11 +126,12 @@ Enemy, NPC, and boss details can be entered privately.
 
 The DM can choose whether table view shows:
 
+- class / role
 - HP
 - status/debuff
 - buff
 
-This lets the DM track enemy details without revealing everything to players.
+If class / role is filled in but **Show class/role** is unchecked, the card continues to show the default type such as `ENEMY`, `NPC`, or `BOSS`.
 
 ### Initiative Tracker
 
@@ -102,10 +142,11 @@ The Combat Tracker supports:
 - compact turn list
 - Next Turn control
 - active turn highlighting
-- grouped initiative
+- grouped initiative setup
 - initiative tie breaker
 - removable initiative entries
-- collapsible initiative setup section
+- death/skull removal from initiative
+- collapsible Turn Order and Initiative Setup sections
 
 When a turn is active, the app highlights:
 
@@ -115,7 +156,12 @@ When a turn is active, the app highlights:
 
 ### Terrain
 
-Current terrain tools include:
+Terrain now includes two layers:
+
+1. **Grid terrain markers** for simple square-based icons.
+2. **Freeform terrain objects** for larger draggable/resizable battlefield pieces.
+
+Grid terrain tools include:
 
 - Tree
 - Rock
@@ -126,7 +172,32 @@ Current terrain tools include:
 - Stairs
 - Chest
 
-Current terrain is grid-based. Freeform terrain objects are planned.
+Freeform terrain objects include:
+
+- Tree Canopy
+- Boulder
+- Stone Formation
+- Brush Thicket
+- Ruined Wall
+- Stone Pillar
+- Crate Stack
+- Pond / Pool
+
+Freeform objects can be dragged, resized, erased, saved, loaded, exported, and imported.
+
+### Scene Themes
+
+The battlefield can use different background themes:
+
+- Relic Default
+- Stone Dungeon
+- Forest Floor
+- Sand / Desert
+- Ice Field
+- Hell / Ember
+- City / Cobblestone
+
+Scene themes affect the battlefield/grid presentation while keeping the Aure Relics header and brand identity consistent.
 
 ### Scene Saving and Loading
 
@@ -135,51 +206,45 @@ Scenes save locally in the browser.
 A saved scene can include:
 
 - grid size
+- battlefield theme
 - void fill
-- terrain
+- grid terrain
+- freeform terrain objects
 - token placement
 - character names
 - class / role
 - HP and temp HP
 - status and buff data
 - enemy visibility settings
+- initiative groups
 - initiative data
 - current turn position
+
+### Backup Export / Import
+
+The app can export saved scenes, DM notes, and history into a local JSON backup file.
+
+Use this before clearing browser data, moving to another device, or testing a new release.
 
 ---
 
 ## How to Use
 
-1. Open the app in a modern web browser.
+1. Open `index.html` in a modern web browser.
 2. Set the grid size if needed.
-3. Use **Void Fill** and terrain tools to shape the map.
-4. Place player, enemy, NPC, and boss tokens.
-5. Use the cog buttons on HUD cards to enter details.
-6. Save the scene.
-7. Enter initiative values.
-8. Click **Sort Initiative**.
-9. Collapse Initiative Setup to reduce clutter.
+3. Choose a battlefield theme if desired.
+4. Use **Void Fill** and terrain tools to shape the map.
+5. Place player, enemy, NPC, and boss tokens.
+6. Use the cog buttons on HUD cards to enter details.
+7. Save the scene.
+8. Enter initiative values or prepare groups.
+9. Click **Sort Initiative**.
 10. Use **Next Turn** during combat.
 
 For a more detailed walkthrough, see:
 
 ```text
 Aure-Relics-Tutorial.md
-```
-
----
-
-## Project Files
-
-```text
-index.html
-style.css
-script.js
-README.md
-Aure-Relics-Tutorial.md
-images/
-  Logo-symbol.png
-  Logo-banner.png
 ```
 
 ---
@@ -194,6 +259,9 @@ This means:
 - clearing browser storage may delete saved scenes
 - private/incognito windows may not keep scenes
 - saved scenes do not sync between devices yet
+- offline save/load still works in the same browser profile
+
+Use **Export Backup** to protect your work.
 
 ---
 
@@ -201,15 +269,14 @@ This means:
 
 The current version does not yet include:
 
-- freeform draggable terrain
-- resizable tree canopies
-- stone formations or large rock objects
 - grid-line wall and door construction
 - AoE templates
 - line of sight tools
 - cone/radius/line attack overlays
 - multiplayer hosting
 - cloud scene storage
+- full campaign folder system
+- player-facing host/join mode
 
 ---
 
@@ -217,19 +284,19 @@ The current version does not yet include:
 
 ### Near-Term
 
-- Add in-app tutorial panel
-- Improve visual polish and theme cohesion
+- Continue terrain visual improvement
+- Improve scene theme polish
+- Add campaign folders
+- Improve backup and restore messaging
 - Continue responsive testing across phones, tablets, desktops, and TV displays
-- Improve terrain visuals
-- Add more terrain options
 
 ### Advanced Map Tools
 
-- Freeform draggable/resizable terrain objects
-- Tree canopies
-- Boulders and rock formations
-- Structure tools for walls and doors on grid lines
+- Walls and doors on grid lines
 - Dungeon and building construction helpers
+- Image-based terrain
+- Image-based tokens
+- Hidden/revealed objects and traps
 
 ### Tactical Overlay Tools
 
@@ -246,19 +313,20 @@ The current version does not yet include:
 
 - Fog of war
 - Fullscreen/player-facing mode
-- Image-based tokens
-- Image-based terrain
 - Multiplayer host/player sessions
 - Player join system
-- Scene import/export
+- Campaign import/export
 
 ---
 
-## Testing Feedback
+## Testing Checklist
 
 Useful testing areas:
 
+- offline loading with internet disabled
+- local fonts present in `/fonts/`
 - save/load reliability
+- export/import backup reliability
 - multiple grid sizes
 - large-grid scaling
 - mobile layout
@@ -266,9 +334,12 @@ Useful testing areas:
 - TV/monitor display
 - initiative grouping
 - active-turn highlighting
+- death/skull initiative removal
 - enemy visibility controls
 - scene overwrite prevention
 - token movement
+- freeform terrain movement/resizing
+- theme save/load behavior
 - HUD readability
 
 ---

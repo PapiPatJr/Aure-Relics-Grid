@@ -6,6 +6,9 @@ const MIN_GRID_SIZE = 5;
 const MAX_GRID_SIZE = 80;
 const MAX_PLAYERS = 8;
 const SAVED_MAPS_KEY = "aureRelicsSavedMaps";
+const DM_NOTES_KEY = "aureRelicsDmNotes";
+const DM_HISTORY_KEY = "aureRelicsDmHistory";
+const MAX_HISTORY_ENTRIES = 80;
 
 const TOKEN_TYPES = {
   player: { prefix: "P", color: "blue", label: "Player", priority: 1 },
@@ -23,6 +26,27 @@ const TERRAIN_ICONS = {
   house: "🏠",
   stairs: "⬇️",
   chest: "🧰"
+};
+
+const TERRAIN_OBJECTS = {
+  treeCanopy: { icon: "🌳", label: "Tree Canopy" },
+  boulder: { icon: "⬒", label: "Boulder" },
+  stoneFormation: { icon: "⛰", label: "Stone Formation" },
+  brushThicket: { icon: "✦", label: "Brush Thicket" },
+  ruinedWall: { icon: "▥", label: "Ruined Wall" },
+  stonePillar: { icon: "●", label: "Stone Pillar" },
+  crateStack: { icon: "▣", label: "Crate Stack" },
+  pond: { icon: "◌", label: "Pond / Pool" }
+};
+
+const SCENE_THEMES = {
+  relic: { label: "Relic Default" },
+  stoneDungeon: { label: "Stone Dungeon" },
+  forestFloor: { label: "Forest Floor" },
+  sandDesert: { label: "Sand / Desert" },
+  iceField: { label: "Ice Field" },
+  hellEmber: { label: "Hell / Ember" },
+  cityCobblestone: { label: "City / Cobblestone" }
 };
 
 const DND_STATUSES = [
@@ -61,6 +85,11 @@ const BUFF_OPTIONS = [
 ];
 
 const elements = {
+  appLayout: requireElement("appLayout"),
+  sidebarPanel: requireElement("sidebarPanel"),
+  rightPanel: requireElement("rightPanel"),
+  toggleSidebar: requireElement("toggleSidebar"),
+  toggleTracker: requireElement("toggleTracker"),
   currentScene: requireElement("currentScene"),
   gridInfo: requireElement("gridInfo"),
   grid: requireElement("grid"),
@@ -72,6 +101,8 @@ const elements = {
   gridHeightInput: requireElement("gridHeightInput"),
   applyGridSize: requireElement("applyGridSize"),
   brushSize: requireElement("brushSize"),
+  sceneTheme: requireElement("sceneTheme"),
+  resetSceneTheme: requireElement("resetSceneTheme"),
 
   wallTool: requireElement("wallTool"),
   eraseTool: requireElement("eraseTool"),
@@ -90,20 +121,33 @@ const elements = {
   houseTool: requireElement("houseTool"),
   stairsTool: requireElement("stairsTool"),
   chestTool: requireElement("chestTool"),
+  treeCanopyTool: requireElement("treeCanopyTool"),
+  boulderTool: requireElement("boulderTool"),
+  stoneFormationTool: requireElement("stoneFormationTool"),
+  brushThicketTool: requireElement("brushThicketTool"),
+  ruinedWallTool: requireElement("ruinedWallTool"),
+  stonePillarTool: requireElement("stonePillarTool"),
+  crateStackTool: requireElement("crateStackTool"),
+  pondTool: requireElement("pondTool"),
 
   mapName: requireElement("mapName"),
   mapList: requireElement("mapList"),
   saveMap: requireElement("saveMap"),
   loadMap: requireElement("loadMap"),
   deleteMap: requireElement("deleteMap"),
+  exportData: requireElement("exportData"),
+  importData: requireElement("importData"),
+  importDataFile: requireElement("importDataFile"),
 
   playerStatusBoard: requireElement("playerStatusBoard"),
   enemyStatusStrip: requireElement("enemyStatusStrip"),
 
+  turnOrderPanel: requireElement("turnOrderPanel"),
   initiativeSetup: requireElement("initiativeSetup"),
   initiativeList: requireElement("initiativeList"),
   groupSelected: requireElement("groupSelected"),
   sortInitiative: requireElement("sortInitiative"),
+  clearInitiative: requireElement("clearInitiative"),
   nextTurn: requireElement("nextTurn"),
 
   tieResolver: requireElement("tieResolver"),
@@ -121,11 +165,21 @@ const elements = {
   modalTempHp: requireElement("modalTempHp"),
   modalStatus: requireElement("modalStatus"),
   modalBuff: requireElement("modalBuff"),
+  modalShowRole: requireElement("modalShowRole"),
   modalShowHp: requireElement("modalShowHp"),
   modalShowStatus: requireElement("modalShowStatus"),
   modalShowBuff: requireElement("modalShowBuff"),
   modalSave: requireElement("modalSave"),
-  modalCancel: requireElement("modalCancel")
+  modalCancel: requireElement("modalCancel"),
+
+  dmWorkspace: requireElement("dmWorkspace"),
+  dmNotesTab: requireElement("dmNotesTab"),
+  dmHistoryTab: requireElement("dmHistoryTab"),
+  dmNotesPanel: requireElement("dmNotesPanel"),
+  dmHistoryPanel: requireElement("dmHistoryPanel"),
+  dmNotesText: requireElement("dmNotesText"),
+  dmHistoryLog: requireElement("dmHistoryLog"),
+  toggleDmWorkspace: requireElement("toggleDmWorkspace")
 };
 
 if (!elements.battleStage || !elements.mapRegion || !elements.gridFrame) {
@@ -135,9 +189,12 @@ if (!elements.battleStage || !elements.mapRegion || !elements.gridFrame) {
 let gridWidth = DEFAULT_GRID_WIDTH;
 let gridHeight = DEFAULT_GRID_HEIGHT;
 let currentTool = "wall";
+let currentSceneTheme = "relic";
 let isPainting = false;
 let lastPaintedCell = null;
 let draggedToken = null;
+let draggedTerrainObject = null;
+let terrainObjectCounter = 1;
 let fitAnimationFrame = null;
 
 let tokenCounters = createDefaultTokenCounters();
@@ -145,9 +202,12 @@ let tokenData = {};
 
 let initiativeEntries = [];
 let initiativeValues = {};
+let initiativeGroups = [];
 let currentTurnIndex = 0;
 let pendingTieGroups = [];
 let pendingSortedEntries = [];
+let pendingActiveEntryKey = "";
+let historyEntries = [];
 
 function requireElement(id) {
   const element = document.getElementById(id);
@@ -173,9 +233,11 @@ function resetCombatState() {
   tokenData = {};
   initiativeEntries = [];
   initiativeValues = {};
+  initiativeGroups = [];
   currentTurnIndex = 0;
   pendingTieGroups = [];
   pendingSortedEntries = [];
+  pendingActiveEntryKey = "";
   hideTieResolver();
 }
 
@@ -184,7 +246,14 @@ function isTokenTool(toolName) {
 }
 
 function isTerrainTool(toolName) {
-  return Object.hasOwn(TERRAIN_ICONS, toolName);
+  return Object.hasOwn(TERRAIN_ICONS, toolName) || Object.hasOwn(TERRAIN_OBJECTS, toolName);
+}
+
+function hasInitiativeScore(value) {
+  return value !== null &&
+    value !== undefined &&
+    String(value).trim() !== "" &&
+    Number.isFinite(Number(value));
 }
 
 function setActiveTool(toolName, buttonElement) {
@@ -222,6 +291,8 @@ function ensureTokenData(label) {
     tempHp: existing.tempHp ?? "",
     status: existing.status ?? "Normal",
     buff: existing.buff ?? "None",
+    showRole: existing.showRole ?? isPlayer,
+    dead: Boolean(existing.dead),
     showHp: existing.showHp ?? isPlayer,
     showStatus: existing.showStatus ?? isPlayer,
     showBuff: existing.showBuff ?? isPlayer,
@@ -302,6 +373,9 @@ function createTokenElement(label, color) {
   const type = getTokenType(label);
   const token = document.createElement("div");
   token.className = `token token-${type}`;
+  if (tokenData[label]?.dead) {
+    token.classList.add("dead-combatant");
+  }
   token.dataset.tokenId = label;
   token.textContent = label;
   token.style.background = color;
@@ -322,11 +396,349 @@ function createTokenElement(label, color) {
   return token;
 }
 
-function createTerrainElement(icon) {
+function createTerrainElement(icon, terrainType = "") {
   const terrain = document.createElement("div");
-  terrain.className = "terrain";
+  terrain.className = terrainType ? `terrain terrain-${terrainType}` : "terrain";
   terrain.textContent = icon;
+
+  if (terrainType) {
+    terrain.dataset.terrainType = terrainType;
+    terrain.title = TERRAIN_OBJECTS[terrainType]?.label || terrainType;
+  }
+
   return terrain;
+}
+
+function createSavedTerrainElement(savedTerrain) {
+  if (!savedTerrain) {
+    return null;
+  }
+
+  if (Object.hasOwn(TERRAIN_OBJECTS, savedTerrain)) {
+    return createTerrainElement(TERRAIN_OBJECTS[savedTerrain].icon, savedTerrain);
+  }
+
+  if (Object.hasOwn(TERRAIN_ICONS, savedTerrain)) {
+    return createTerrainElement(TERRAIN_ICONS[savedTerrain], savedTerrain);
+  }
+
+  const iconEntry = Object.entries(TERRAIN_ICONS).find(([, icon]) => icon === savedTerrain);
+  if (iconEntry) {
+    return createTerrainElement(iconEntry[1], iconEntry[0]);
+  }
+
+  return createTerrainElement(savedTerrain);
+}
+
+function getCellRowColumn(cell) {
+  const index = Number(cell.dataset.index);
+  return {
+    row: Math.floor(index / gridWidth),
+    column: index % gridWidth
+  };
+}
+
+function getFiniteNumber(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function getGridCellFromPoint(clientX, clientY) {
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null;
+  }
+
+  const gridRect = elements.grid.getBoundingClientRect();
+  const cellSize =
+    parseFloat(elements.grid.style.getPropertyValue("--cell-size")) ||
+    gridRect.width / gridWidth ||
+    32;
+  const x = clientX - gridRect.left;
+  const y = clientY - gridRect.top;
+  const gridPixelWidth = cellSize * gridWidth;
+  const gridPixelHeight = cellSize * gridHeight;
+
+  if (x < 0 || y < 0 || x >= gridPixelWidth || y >= gridPixelHeight) {
+    return null;
+  }
+
+  const column = Math.floor(x / cellSize);
+  const row = Math.floor(y / cellSize);
+  const index = row * gridWidth + column;
+
+  return elements.grid.querySelector(`[data-index="${index}"]`);
+}
+
+function getClampedFreeformTerrainBounds(row, column, width, height) {
+  const safeWidth = Math.max(1, Math.min(gridWidth, getFiniteNumber(width, 3)));
+  const safeHeight = Math.max(1, Math.min(gridHeight, getFiniteNumber(height, 3)));
+
+  return {
+    row: clampGridValue(getFiniteNumber(row, 0), Math.max(0, gridHeight - safeHeight)),
+    column: clampGridValue(getFiniteNumber(column, 0), Math.max(0, gridWidth - safeWidth)),
+    width: safeWidth,
+    height: safeHeight
+  };
+}
+
+function syncFreeformTerrainObjectPosition(object) {
+  const row = Number(object.dataset.row) || 0;
+  const column = Number(object.dataset.column) || 0;
+  const width = Math.max(1, Number(object.dataset.width) || 3);
+  const height = Math.max(1, Number(object.dataset.height) || 3);
+
+  object.style.left = `calc(var(--cell-size) * ${column})`;
+  object.style.top = `calc(var(--cell-size) * ${row})`;
+  object.style.width = `calc(var(--cell-size) * ${width})`;
+  object.style.height = `calc(var(--cell-size) * ${height})`;
+}
+
+function createFreeformTerrainObject(type, row, column, width = 3, height = 3) {
+  const config = TERRAIN_OBJECTS[type];
+
+  if (!config) {
+    return null;
+  }
+
+  const bounds = getClampedFreeformTerrainBounds(row, column, width, height);
+  const object = document.createElement("div");
+  object.className = `freeform-terrain freeform-terrain-${type}`;
+  object.dataset.terrainObjectId = `terrain-${terrainObjectCounter}`;
+  terrainObjectCounter += 1;
+  object.dataset.terrainObjectType = type;
+  object.dataset.row = String(bounds.row);
+  object.dataset.column = String(bounds.column);
+  object.dataset.width = String(bounds.width);
+  object.dataset.height = String(bounds.height);
+  object.title = `${config.label} — drag to move, corner to resize`;
+
+  const icon = document.createElement("span");
+  icon.className = "freeform-terrain-icon";
+  icon.textContent = config.icon;
+
+  const label = document.createElement("span");
+  label.className = "freeform-terrain-label";
+  label.textContent = config.label;
+
+  const resizeHandle = document.createElement("button");
+  resizeHandle.type = "button";
+  resizeHandle.className = "freeform-terrain-resize";
+  resizeHandle.textContent = "↘";
+  resizeHandle.setAttribute("aria-label", `Resize ${config.label}`);
+
+  object.append(icon, label, resizeHandle);
+  syncFreeformTerrainObjectPosition(object);
+
+  object.addEventListener("pointerdown", event => {
+    if (currentTool === "erase") {
+      event.preventDefault();
+      event.stopPropagation();
+      object.remove();
+      addHistoryLog(`Removed ${config.label}.`);
+      return;
+    }
+
+    if (!Object.hasOwn(TERRAIN_OBJECTS, currentTool) && !event.target.closest(".freeform-terrain-resize")) {
+      const cell = getGridCellFromPoint(event.clientX, event.clientY);
+
+      if (!cell) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      applyTool(cell);
+
+      if (!isTokenTool(currentTool)) {
+        isPainting = true;
+        lastPaintedCell = cell;
+      }
+
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const mode = event.target.closest(".freeform-terrain-resize") ? "resize" : "move";
+    draggedTerrainObject = {
+      element: object,
+      mode,
+      startX: event.clientX,
+      startY: event.clientY,
+      startRow: Number(object.dataset.row) || 0,
+      startColumn: Number(object.dataset.column) || 0,
+      startWidth: Number(object.dataset.width) || 3,
+      startHeight: Number(object.dataset.height) || 3
+    };
+
+    object.classList.add("dragging-terrain");
+  });
+
+  return object;
+}
+
+function placeFreeformTerrainObject(cell, type) {
+  const { row, column } = getCellRowColumn(cell);
+  const defaultSizes = {
+    treeCanopy: [4, 4],
+    boulder: [2, 2],
+    stoneFormation: [4, 3],
+    brushThicket: [3, 2],
+    ruinedWall: [4, 1],
+    stonePillar: [1, 1],
+    crateStack: [2, 2],
+    pond: [3, 2]
+  };
+  const [width, height] = defaultSizes[type] || [3, 3];
+  const object = createFreeformTerrainObject(type, row, column, width, height);
+
+  if (!object) {
+    return;
+  }
+
+  elements.grid.appendChild(object);
+  addHistoryLog(`Placed ${TERRAIN_OBJECTS[type].label}.`);
+}
+
+function getFreeformTerrainObjectsData() {
+  return Array.from(elements.grid.querySelectorAll(".freeform-terrain")).map(object => ({
+    type: object.dataset.terrainObjectType,
+    row: Number(object.dataset.row) || 0,
+    column: Number(object.dataset.column) || 0,
+    width: Number(object.dataset.width) || 1,
+    height: Number(object.dataset.height) || 1
+  }));
+}
+
+function restoreFreeformTerrainObjects(objects = []) {
+  if (!Array.isArray(objects)) {
+    return;
+  }
+
+  objects.forEach(savedObject => {
+    if (!savedObject || !Object.hasOwn(TERRAIN_OBJECTS, savedObject.type)) {
+      return;
+    }
+
+    const object = createFreeformTerrainObject(
+      savedObject.type,
+      Number(savedObject.row) || 0,
+      Number(savedObject.column) || 0,
+      Number(savedObject.width) || 3,
+      Number(savedObject.height) || 3
+    );
+
+    if (object) {
+      elements.grid.appendChild(object);
+    }
+  });
+}
+
+function clampGridValue(value, max) {
+  return Math.max(0, Math.min(max, value));
+}
+
+function updateDraggedTerrainObject(event) {
+  if (!draggedTerrainObject) {
+    return false;
+  }
+
+  const cellSize = parseFloat(elements.grid.style.getPropertyValue("--cell-size")) || 32;
+  const deltaColumns = Math.round((event.clientX - draggedTerrainObject.startX) / cellSize);
+  const deltaRows = Math.round((event.clientY - draggedTerrainObject.startY) / cellSize);
+  const object = draggedTerrainObject.element;
+
+  if (draggedTerrainObject.mode === "move") {
+    const bounds = getClampedFreeformTerrainBounds(
+      draggedTerrainObject.startRow + deltaRows,
+      draggedTerrainObject.startColumn + deltaColumns,
+      object.dataset.width,
+      object.dataset.height
+    );
+    object.dataset.column = String(bounds.column);
+    object.dataset.row = String(bounds.row);
+  } else {
+    const bounds = getClampedFreeformTerrainBounds(
+      draggedTerrainObject.startRow,
+      draggedTerrainObject.startColumn,
+      draggedTerrainObject.startWidth + deltaColumns,
+      draggedTerrainObject.startHeight + deltaRows
+    );
+    object.dataset.row = String(bounds.row);
+    object.dataset.column = String(bounds.column);
+    object.dataset.width = String(bounds.width);
+    object.dataset.height = String(bounds.height);
+  }
+
+  syncFreeformTerrainObjectPosition(object);
+  return true;
+}
+
+function finishDraggedTerrainObject() {
+  if (!draggedTerrainObject) {
+    return;
+  }
+
+  draggedTerrainObject.element.classList.remove("dragging-terrain");
+  addHistoryLog(`Adjusted ${TERRAIN_OBJECTS[draggedTerrainObject.element.dataset.terrainObjectType]?.label || "terrain object"}.`);
+  draggedTerrainObject = null;
+}
+
+function normalizeInitiativeGroups(groups, entries = []) {
+  const sourceGroups = Array.isArray(groups) && groups.length > 0
+    ? groups
+    : (Array.isArray(entries) ? entries.filter(entry => Array.isArray(entry.members) && entry.members.length > 1) : []);
+
+  return sourceGroups
+    .filter(group => Array.isArray(group.members) && group.members.length > 1)
+    .map((group, index) => ({
+      id: group.id || `group-${Date.now()}-${index}`,
+      members: [...group.members],
+      initiative: group.initiative ?? ""
+    }));
+}
+
+function getInitiativeSetupPanel() {
+  return document.querySelector(".initiative-setup-panel");
+}
+
+function openTurnOrderPanel() {
+  const setupPanel = getInitiativeSetupPanel();
+  elements.turnOrderPanel.open = true;
+  setupPanel?.removeAttribute("open");
+}
+
+function openInitiativeSetupPanel() {
+  const setupPanel = getInitiativeSetupPanel();
+  if (setupPanel) {
+    setupPanel.open = true;
+  }
+  elements.turnOrderPanel.removeAttribute("open");
+}
+
+function getSceneThemeLabel(themeName = currentSceneTheme) {
+  return SCENE_THEMES[themeName]?.label || SCENE_THEMES.relic.label;
+}
+
+function applySceneTheme(themeName = "relic") {
+  const safeTheme = Object.hasOwn(SCENE_THEMES, themeName) ? themeName : "relic";
+  currentSceneTheme = safeTheme;
+  document.body.dataset.sceneTheme = safeTheme;
+
+  if (elements.sceneTheme.value !== safeTheme) {
+    elements.sceneTheme.value = safeTheme;
+  }
+}
+
+function handleSceneThemeChange() {
+  applySceneTheme(elements.sceneTheme.value);
+  addHistoryLog(`Changed scene theme to ${getSceneThemeLabel()}.`);
+}
+
+function handleResetSceneTheme() {
+  applySceneTheme("relic");
+  addHistoryLog("Reset scene theme to Relic Default.");
 }
 
 function applyBrush(startCell) {
@@ -357,6 +769,11 @@ function applyBrush(startCell) {
 }
 
 function applyTool(cell, fromBrush = false) {
+  if (!fromBrush && Object.hasOwn(TERRAIN_OBJECTS, currentTool)) {
+    placeFreeformTerrainObject(cell, currentTool);
+    return;
+  }
+
   if (!fromBrush && !isTokenTool(currentTool)) {
     applyBrush(cell);
     return;
@@ -375,6 +792,7 @@ function applyTool(cell, fromBrush = false) {
     removedToken?.remove();
 
     if (removedToken) {
+      removeLabelFromInitiative(getTokenLabel(removedToken));
       refreshCombatUI();
     }
 
@@ -389,7 +807,12 @@ function applyTool(cell, fromBrush = false) {
   if (isTerrainTool(currentTool)) {
     cell.classList.remove("wall");
     cell.querySelector(".terrain")?.remove();
-    cell.appendChild(createTerrainElement(TERRAIN_ICONS[currentTool]));
+
+    if (Object.hasOwn(TERRAIN_OBJECTS, currentTool)) {
+      cell.appendChild(createTerrainElement(TERRAIN_OBJECTS[currentTool].icon, currentTool));
+    } else {
+      cell.appendChild(createTerrainElement(TERRAIN_ICONS[currentTool], currentTool));
+    }
   }
 }
 
@@ -398,7 +821,11 @@ function placeToken(cell, tokenType) {
     return;
   }
 
-  if (tokenType === "player" && tokenCounters.player > MAX_PLAYERS) {
+  const playerCount = getTokensOnGrid()
+    .filter(label => getTokenType(label) === "player")
+    .length;
+
+  if (tokenType === "player" && playerCount >= MAX_PLAYERS) {
     alert(`The player HUD supports up to ${MAX_PLAYERS} players.`);
     return;
   }
@@ -409,6 +836,7 @@ function placeToken(cell, tokenType) {
 
   ensureTokenData(label);
   cell.appendChild(createTokenElement(label, config.color));
+  addHistoryLog(`Placed ${label} ${config.label}.`);
   refreshCombatUI();
 }
 
@@ -435,7 +863,7 @@ function createGrid() {
       event.preventDefault();
       applyTool(cell);
 
-      if (!isTokenTool(currentTool)) {
+      if (!isTokenTool(currentTool) && !Object.hasOwn(TERRAIN_OBJECTS, currentTool)) {
         isPainting = true;
         lastPaintedCell = cell;
       }
@@ -448,12 +876,17 @@ function createGrid() {
 }
 
 function handlePointerMove(event) {
+  if (draggedTerrainObject) {
+    event.preventDefault();
+    updateDraggedTerrainObject(event);
+    return;
+  }
+
   if (!isPainting || draggedToken) {
     return;
   }
 
-  const target = document.elementFromPoint(event.clientX, event.clientY);
-  const cell = target?.closest(".cell");
+  const cell = getGridCellFromPoint(event.clientX, event.clientY);
 
   if (!cell || cell === lastPaintedCell || !elements.grid.contains(cell)) {
     return;
@@ -465,17 +898,22 @@ function handlePointerMove(event) {
 }
 
 function handlePointerEnd(event) {
+  if (draggedTerrainObject) {
+    finishDraggedTerrainObject();
+  }
+
   if (draggedToken) {
-    const hasCoordinates =
-      Number.isFinite(event.clientX) && Number.isFinite(event.clientY);
-    const target = hasCoordinates
-      ? document.elementFromPoint(event.clientX, event.clientY)
-      : null;
-    const destinationCell = target?.closest(".cell");
+    const destinationCell = getGridCellFromPoint(event.clientX, event.clientY);
 
     if (destinationCell && elements.grid.contains(destinationCell)) {
-      destinationCell.appendChild(draggedToken);
-      refreshCombatUI();
+      const occupyingToken = destinationCell.querySelector(".token");
+
+      if (!occupyingToken || occupyingToken === draggedToken) {
+        const movedLabel = getTokenLabel(draggedToken);
+        destinationCell.appendChild(draggedToken);
+        addHistoryLog(`Moved ${movedLabel}.`);
+        refreshCombatUI();
+      }
     }
 
     draggedToken.style.cursor = "grab";
@@ -487,10 +925,16 @@ function handlePointerEnd(event) {
 }
 
 function clearGridContents() {
+  elements.grid.querySelectorAll(".freeform-terrain").forEach(object => {
+    object.remove();
+  });
+
   elements.grid.querySelectorAll(".cell").forEach(cell => {
     cell.classList.remove("wall");
     cell.innerHTML = "";
   });
+
+  terrainObjectCounter = 1;
 }
 
 function handleClearGrid() {
@@ -515,7 +959,7 @@ function getCurrentMapData() {
 
     return {
       wall: cell.classList.contains("wall"),
-      terrain: terrain?.textContent || null,
+      terrain: terrain?.dataset.terrainType || terrain?.textContent || null,
       token: token
         ? {
             label: getTokenLabel(token),
@@ -528,10 +972,13 @@ function getCurrentMapData() {
   return {
     width: gridWidth,
     height: gridHeight,
+    sceneTheme: currentSceneTheme,
     cells,
+    terrainObjects: getFreeformTerrainObjectsData(),
     tokenData,
     initiativeEntries,
     initiativeValues,
+    initiativeGroups,
     currentTurnIndex
   };
 }
@@ -545,20 +992,19 @@ function applyMapData(savedData) {
     tokenData = {};
     initiativeEntries = [];
     initiativeValues = {};
+    initiativeGroups = [];
     currentTurnIndex = 0;
     cellData = savedData;
-  } else if (
-    savedData &&
-    Number.isInteger(Number(savedData.width)) &&
-    Number.isInteger(Number(savedData.height)) &&
-    Array.isArray(savedData.cells)
-  ) {
+  } else if (isValidSceneData(savedData)) {
     gridWidth = Number(savedData.width);
     gridHeight = Number(savedData.height);
+    currentSceneTheme = Object.hasOwn(SCENE_THEMES, savedData.sceneTheme) ? savedData.sceneTheme : "relic";
+    applySceneTheme(currentSceneTheme);
     tokenData = savedData.tokenData || {};
     Object.keys(tokenData).forEach(ensureTokenData);
     initiativeEntries = normalizeInitiativeEntries(savedData.initiativeEntries);
     initiativeValues = savedData.initiativeValues || {};
+    initiativeGroups = normalizeInitiativeGroups(savedData.initiativeGroups, savedData.initiativeEntries);
     currentTurnIndex = Number(savedData.currentTurnIndex) || 0;
     cellData = savedData.cells;
   } else {
@@ -567,6 +1013,7 @@ function applyMapData(savedData) {
 
   elements.gridWidthInput.value = String(gridWidth);
   elements.gridHeightInput.value = String(gridHeight);
+  applySceneTheme(currentSceneTheme);
 
   createGrid();
 
@@ -584,7 +1031,10 @@ function applyMapData(savedData) {
     }
 
     if (data.terrain) {
-      cell.appendChild(createTerrainElement(data.terrain));
+      const terrainElement = createSavedTerrainElement(data.terrain);
+      if (terrainElement) {
+        cell.appendChild(terrainElement);
+      }
     }
 
     if (data.token?.label) {
@@ -594,6 +1044,8 @@ function applyMapData(savedData) {
       cell.appendChild(createTokenElement(data.token.label, data.token.color || fallbackColor));
     }
   });
+
+  restoreFreeformTerrainObjects(savedData.terrainObjects);
 
   recalculateTokenCounters();
   refreshCombatUI();
@@ -645,16 +1097,285 @@ function isValidSceneData(savedData) {
     return true;
   }
 
+  const width = Number(savedData?.width);
+  const height = Number(savedData?.height);
+
   return Boolean(
     savedData &&
-    Number.isInteger(Number(savedData.width)) &&
-    Number.isInteger(Number(savedData.height)) &&
+    Number.isInteger(width) &&
+    Number.isInteger(height) &&
+    width >= MIN_GRID_SIZE &&
+    width <= MAX_GRID_SIZE &&
+    height >= MIN_GRID_SIZE &&
+    height <= MAX_GRID_SIZE &&
     Array.isArray(savedData.cells)
   );
 }
 
 function saveSavedMaps(maps) {
   localStorage.setItem(SAVED_MAPS_KEY, JSON.stringify(maps));
+}
+
+function createBackupFileName() {
+  const date = new Date();
+  const stamp = date.toISOString().slice(0, 10);
+  return `aure-relics-backup-${stamp}.json`;
+}
+
+function createBackupPayload() {
+  return {
+    app: "Aure Relics Digital Tabletop Grid",
+    backupVersion: 2,
+    exportedAt: new Date().toISOString(),
+    savedMaps: getSavedMaps(),
+    dmNotes: elements.dmNotesText?.value || "",
+    dmHistory: historyEntries
+  };
+}
+
+function getMapsFromBackupPayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  if (payload.savedMaps && typeof payload.savedMaps === "object") {
+    return payload.savedMaps;
+  }
+
+  const looksLikeRawMapCollection = Object.values(payload).every(isValidSceneData);
+  return looksLikeRawMapCollection ? payload : null;
+}
+
+function validateImportedMaps(maps) {
+  const validMaps = {};
+  const skippedNames = [];
+
+  Object.entries(maps || {}).forEach(([name, sceneData]) => {
+    if (typeof name === "string" && name.trim() && isValidSceneData(sceneData)) {
+      validMaps[name] = sceneData;
+    } else {
+      skippedNames.push(name || "Unnamed scene");
+    }
+  });
+
+  return { validMaps, skippedNames };
+}
+
+function handleExportData() {
+  const payload = createBackupPayload();
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = createBackupFileName();
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function handleImportData() {
+  elements.importDataFile.click();
+}
+
+function handleImportDataFile(event) {
+  const file = event.target.files?.[0];
+
+  if (!file) {
+    return;
+  }
+
+  const reader = new FileReader();
+
+  reader.addEventListener("load", () => {
+    try {
+      const payload = JSON.parse(String(reader.result || "{}"));
+      const importedMaps = getMapsFromBackupPayload(payload);
+
+      if (!importedMaps) {
+        alert("That backup file is not a valid Aure Relics scene backup.");
+        return;
+      }
+
+      const { validMaps, skippedNames } = validateImportedMaps(importedMaps);
+      const importedNames = Object.keys(validMaps);
+      const hasDmNotes = typeof payload.dmNotes === "string";
+      const hasDmHistory = Array.isArray(payload.dmHistory);
+
+      if (importedNames.length === 0 && !hasDmNotes && !hasDmHistory) {
+        alert("No valid scenes, DM notes, or DM history were found in that backup file.");
+        return;
+      }
+
+      const currentMaps = getSavedMaps();
+      const duplicateNames = importedNames.filter(name => Object.hasOwn(currentMaps, name));
+      const warning = duplicateNames.length > 0
+        ? `\n\nExisting scenes with the same name will be overwritten:\n${duplicateNames.join(", ")}`
+        : "";
+      const skippedNotice = skippedNames.length > 0
+        ? `\n\nSkipped invalid scenes: ${skippedNames.join(", ")}`
+        : "";
+      const supplementalData = [
+        hasDmNotes ? "DM notes" : "",
+        hasDmHistory ? "DM history" : ""
+      ].filter(Boolean);
+      const supplementalNotice = supplementalData.length > 0
+        ? `\n\nThis will replace the current ${supplementalData.join(" and ")}.`
+        : "";
+      const confirmed = confirm(
+        `Import ${importedNames.length} scene(s)${supplementalData.length > 0 ? ` plus ${supplementalData.join(" and ")}` : ""} from this backup?${warning}${skippedNotice}${supplementalNotice}`
+      );
+
+      if (!confirmed) {
+        return;
+      }
+
+      saveSavedMaps({ ...currentMaps, ...validMaps });
+
+      if (hasDmNotes) {
+        elements.dmNotesText.value = payload.dmNotes;
+        localStorage.setItem(DM_NOTES_KEY, payload.dmNotes);
+      }
+
+      if (hasDmHistory) {
+        historyEntries = payload.dmHistory.slice(0, MAX_HISTORY_ENTRIES);
+        saveHistoryLog();
+        renderHistoryLog();
+      }
+
+      refreshMapList();
+      elements.mapName.value = "";
+      alert(`Imported ${importedNames.length} scene(s).`);
+    } catch (error) {
+      console.error("Could not import Aure Relics backup:", error);
+      alert("That backup file could not be read. Make sure it is a valid JSON backup.");
+    } finally {
+      elements.importDataFile.value = "";
+    }
+  });
+
+  reader.addEventListener("error", () => {
+    alert("That backup file could not be read.");
+    elements.importDataFile.value = "";
+  });
+
+  reader.readAsText(file);
+}
+
+
+function getActiveEntryKey() {
+  return initiativeEntries[currentTurnIndex] ? getEntryKey(initiativeEntries[currentTurnIndex]) : "";
+}
+
+function getActivePrimaryMember() {
+  return initiativeEntries[currentTurnIndex]?.members?.[0] || "";
+}
+
+function restoreTurnIndex(preferredKey = "", preferredMember = "") {
+  if (initiativeEntries.length === 0) {
+    currentTurnIndex = 0;
+    return;
+  }
+
+  if (preferredKey) {
+    const keyIndex = initiativeEntries.findIndex(entry => getEntryKey(entry) === preferredKey);
+    if (keyIndex >= 0) {
+      currentTurnIndex = keyIndex;
+      return;
+    }
+  }
+
+  if (preferredMember) {
+    const memberIndex = initiativeEntries.findIndex(entry => entry.members.includes(preferredMember));
+    if (memberIndex >= 0) {
+      currentTurnIndex = memberIndex;
+      return;
+    }
+  }
+
+  currentTurnIndex = Math.min(currentTurnIndex, initiativeEntries.length - 1);
+}
+
+function getStoredHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DM_HISTORY_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed.slice(0, MAX_HISTORY_ENTRIES) : [];
+  } catch (error) {
+    console.error("Could not read DM history:", error);
+    return [];
+  }
+}
+
+function saveHistoryLog() {
+  localStorage.setItem(DM_HISTORY_KEY, JSON.stringify(historyEntries.slice(0, MAX_HISTORY_ENTRIES)));
+}
+
+function addHistoryLog(message) {
+  if (!message || !elements.dmHistoryLog) {
+    return;
+  }
+
+  historyEntries.unshift({
+    time: new Date().toISOString(),
+    message
+  });
+
+  historyEntries = historyEntries.slice(0, MAX_HISTORY_ENTRIES);
+  saveHistoryLog();
+  renderHistoryLog();
+}
+
+function renderHistoryLog() {
+  elements.dmHistoryLog.innerHTML = "";
+
+  if (historyEntries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "dm-history-empty";
+    empty.textContent = "Recent moves, edits, saves, and turn changes will appear here.";
+    elements.dmHistoryLog.appendChild(empty);
+    return;
+  }
+
+  historyEntries.forEach(entry => {
+    const row = document.createElement("div");
+    row.className = "dm-history-row";
+
+    const time = document.createElement("span");
+    time.className = "dm-history-time";
+    time.textContent = new Date(entry.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    const message = document.createElement("span");
+    message.className = "dm-history-message";
+    message.textContent = entry.message;
+
+    row.append(time, message);
+    elements.dmHistoryLog.appendChild(row);
+  });
+}
+
+function setDmWorkspaceTab(tabName) {
+  const showingNotes = tabName === "notes";
+  elements.dmNotesTab.classList.toggle("active", showingNotes);
+  elements.dmHistoryTab.classList.toggle("active", !showingNotes);
+  elements.dmNotesPanel.classList.toggle("active", showingNotes);
+  elements.dmHistoryPanel.classList.toggle("active", !showingNotes);
+}
+
+function toggleDmWorkspace() {
+  const collapsed = elements.dmWorkspace.classList.toggle("collapsed");
+  document.body.classList.toggle("dm-workspace-open", !collapsed);
+  elements.toggleDmWorkspace.textContent = collapsed ? "DM Panel ▲" : "DM Panel ▼";
+  elements.toggleDmWorkspace.setAttribute("aria-label", collapsed ? "Expand DM workspace" : "Collapse DM workspace");
+  scheduleGridFit();
+}
+
+function initializeDmWorkspace() {
+  elements.dmNotesText.value = localStorage.getItem(DM_NOTES_KEY) || "";
+  historyEntries = getStoredHistory();
+  document.body.classList.toggle("dm-workspace-open", !elements.dmWorkspace.classList.contains("collapsed"));
+  renderHistoryLog();
 }
 
 function refreshMapList(selectedName = "") {
@@ -703,6 +1424,7 @@ function handleSaveMap() {
   refreshMapList(name);
   elements.currentScene.textContent = name;
   elements.mapName.value = "";
+  addHistoryLog(`Saved scene: ${name}.`);
   alert(`Scene saved: ${name}`);
 }
 
@@ -738,6 +1460,7 @@ function handleLoadMap() {
   elements.currentScene.textContent = name;
   elements.mapName.value = "";
   refreshMapList(name);
+  addHistoryLog(`Loaded scene: ${name}.`);
 }
 
 function handleDeleteMap() {
@@ -760,6 +1483,8 @@ function handleDeleteMap() {
   if (elements.currentScene.textContent === name) {
     elements.currentScene.textContent = "No Scene Loaded";
   }
+
+  addHistoryLog(`Deleted scene: ${name}.`);
 }
 
 function handleApplyGridSize() {
@@ -791,6 +1516,7 @@ function handleApplyGridSize() {
   resetCombatState();
   elements.currentScene.textContent = "No Scene Loaded";
   createGrid();
+  addHistoryLog(`Changed grid size to ${gridWidth} × ${gridHeight}.`);
   refreshCombatUI();
 }
 
@@ -833,17 +1559,21 @@ function applyActiveHighlights() {
   const activeMembers = new Set(getActiveMembers());
 
   elements.grid.querySelectorAll(".token").forEach(token => {
+    const label = getTokenLabel(token);
     token.classList.toggle(
       "active-combatant",
-      activeMembers.has(getTokenLabel(token))
+      activeMembers.has(label)
     );
+    token.classList.toggle("dead-combatant", Boolean(tokenData[label]?.dead));
   });
 
   document.querySelectorAll(".hud-card").forEach(card => {
+    const label = card.dataset.tokenId;
     card.classList.toggle(
       "active-combatant",
-      activeMembers.has(card.dataset.tokenId)
+      activeMembers.has(label)
     );
+    card.classList.toggle("dead-combatant", Boolean(tokenData[label]?.dead));
   });
 }
 
@@ -958,7 +1688,18 @@ function createHudCard(label, type) {
 
   const typeTag = document.createElement("span");
   typeTag.className = "hud-type-tag";
-  typeTag.textContent = type === "player" ? "" : TOKEN_TYPES[type]?.label || "";
+  const visibleRole = String(data.characterClass || "").trim();
+  typeTag.textContent = type === "player"
+    ? ""
+    : (data.showRole && visibleRole ? visibleRole.toUpperCase() : TOKEN_TYPES[type]?.label || "");
+
+  const deathButton = document.createElement("button");
+  deathButton.type = "button";
+  deathButton.className = "hud-death";
+  deathButton.textContent = data.dead ? "☠" : "✕";
+  deathButton.setAttribute("aria-label", data.dead ? `Restore ${getDisplayName(label)}` : `Mark ${getDisplayName(label)} dead and remove from initiative`);
+  deathButton.title = data.dead ? "Restore combatant" : "Mark dead / remove from initiative";
+  deathButton.addEventListener("click", () => toggleCombatantDead(label));
 
   const settings = document.createElement("button");
   settings.type = "button";
@@ -971,10 +1712,61 @@ function createHudCard(label, type) {
   if (typeTag.textContent) {
     topLine.appendChild(typeTag);
   }
-  topLine.appendChild(settings);
+  topLine.append(deathButton, settings);
   card.appendChild(topLine);
 
   return card;
+}
+
+
+function removeLabelFromInitiative(label) {
+  const activeKey = getActiveEntryKey();
+  const activeMember = getActivePrimaryMember();
+
+  initiativeGroups = initiativeGroups
+    .map(group => {
+      if (!group.members.includes(label)) {
+        return group;
+      }
+
+      const remainingMembers = group.members.filter(member => member !== label);
+
+      if (remainingMembers.length === 1 && hasInitiativeScore(group.initiative)) {
+        initiativeValues[remainingMembers[0]] = Number(group.initiative);
+      }
+
+      return {
+        ...group,
+        members: remainingMembers
+      };
+    })
+    .filter(group => group.members.length > 1);
+
+  initiativeEntries = initiativeEntries
+    .map(entry => ({
+      ...entry,
+      members: entry.members.filter(member => member !== label),
+      name: entry.members.filter(member => member !== label).join(" / ")
+    }))
+    .filter(entry => entry.members.length > 0);
+
+  delete initiativeValues[label];
+
+  restoreTurnIndex(activeKey, activeMember === label ? "" : activeMember);
+}
+
+function toggleCombatantDead(label) {
+  const data = ensureTokenData(label);
+  data.dead = !data.dead;
+
+  if (data.dead) {
+    removeLabelFromInitiative(label);
+    addHistoryLog(`Marked ${getCompactLabel(label)} dead and removed from initiative.`);
+  } else {
+    addHistoryLog(`Restored ${getCompactLabel(label)}.`);
+  }
+
+  refreshCombatUI();
 }
 
 function createNumberTextInput(value, ariaLabel) {
@@ -1062,6 +1854,7 @@ function openCombatantModal(label) {
   elements.modalTempHp.value = data.tempHp || "";
   populateSelect(elements.modalStatus, DND_STATUSES, data.status || "Normal");
   populateSelect(elements.modalBuff, BUFF_OPTIONS, data.buff || "None");
+  elements.modalShowRole.checked = Boolean(data.showRole);
   elements.modalShowHp.checked = Boolean(data.showHp);
   elements.modalShowStatus.checked = Boolean(data.showStatus);
   elements.modalShowBuff.checked = Boolean(data.showBuff);
@@ -1105,34 +1898,92 @@ function saveCombatantModal() {
   data.tempHp = cleanNumberInput(elements.modalTempHp.value);
   data.status = resolveSelectValue(elements.modalStatus, data.status, "status");
   data.buff = resolveSelectValue(elements.modalBuff, data.buff, "buff or debuff");
+  data.showRole = elements.modalShowRole.checked;
   data.showHp = elements.modalShowHp.checked;
   data.showStatus = elements.modalShowStatus.checked;
   data.showBuff = elements.modalShowBuff.checked;
 
   closeCombatantModal();
+  addHistoryLog(`Updated ${label} details.`);
   refreshCombatUI();
 }
 
 function renderInitiativeSetup(labels) {
   const groupedMembers = new Set(
-    initiativeEntries.flatMap(entry => entry.members)
+    initiativeGroups.flatMap(group => group.members)
   );
 
   elements.initiativeSetup.innerHTML = "";
 
+  if (initiativeGroups.length > 0) {
+    const groupList = document.createElement("div");
+    groupList.className = "initiative-group-list";
+
+    initiativeGroups.forEach(group => {
+      const groupRow = document.createElement("div");
+      groupRow.className = "initiative-group-summary";
+      groupRow.title = group.members.map(getCompactLabel).join(" / ");
+
+      const groupLabel = document.createElement("span");
+      groupLabel.textContent = `Group Selected: ${group.members.map(getCompactLabel).join(" / ")}`;
+
+      const groupInput = document.createElement("input");
+      groupInput.type = "number";
+      groupInput.className = "initiative-input initiative-group-input";
+      groupInput.dataset.groupId = group.id;
+      groupInput.placeholder = "Init";
+      groupInput.value = group.initiative ?? "";
+      groupInput.setAttribute("aria-label", `${groupLabel.textContent} initiative`);
+
+      groupInput.addEventListener("input", () => {
+        group.initiative = groupInput.value === "" ? "" : Number(groupInput.value);
+      });
+
+      const disbandButton = document.createElement("button");
+      disbandButton.type = "button";
+      disbandButton.className = "group-disband";
+      disbandButton.textContent = "Ungroup";
+      disbandButton.setAttribute("aria-label", `Ungroup ${groupLabel.textContent}`);
+      disbandButton.addEventListener("click", () => {
+        if (hasInitiativeScore(group.initiative)) {
+          const initiative = Number(group.initiative);
+          group.members.forEach(member => {
+            initiativeValues[member] = initiative;
+          });
+        }
+
+        initiativeGroups = initiativeGroups.filter(existing => existing.id !== group.id);
+        initiativeEntries = initiativeEntries.filter(entry => getEntryKey(entry) !== group.members.join("|"));
+        addHistoryLog(`Ungrouped ${group.members.map(getCompactLabel).join(" / ")}.`);
+        refreshCombatUI();
+      });
+
+      groupRow.append(groupLabel, groupInput, disbandButton);
+      groupList.appendChild(groupRow);
+    });
+
+    elements.initiativeSetup.appendChild(groupList);
+  }
+
   labels.forEach(label => {
+    const data = ensureTokenData(label);
     const row = document.createElement("div");
     row.className = "initiative-row";
+    row.classList.toggle("dead-row", Boolean(data.dead));
 
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.className = "initiative-check";
     checkbox.value = label;
-    checkbox.disabled = groupedMembers.has(label);
+    checkbox.disabled = groupedMembers.has(label) || data.dead;
     checkbox.setAttribute("aria-label", `Select ${getDisplayName(label)} for grouping`);
 
     const name = document.createElement("span");
-    name.textContent = getCompactLabel(label);
+    name.textContent = groupedMembers.has(label)
+      ? `${getCompactLabel(label)} (in group)`
+      : data.dead
+        ? `${getCompactLabel(label)} (dead)`
+        : getCompactLabel(label);
 
     const input = document.createElement("input");
     input.type = "number";
@@ -1140,7 +1991,7 @@ function renderInitiativeSetup(labels) {
     input.dataset.token = label;
     input.placeholder = "Init";
     input.value = initiativeValues[label] ?? "";
-    input.disabled = groupedMembers.has(label);
+    input.disabled = groupedMembers.has(label) || data.dead;
     input.setAttribute("aria-label", `${getDisplayName(label)} initiative`);
 
     input.addEventListener("input", () => {
@@ -1158,6 +2009,23 @@ function renderInitiativeSetup(labels) {
 
 function cleanInitiativeEntries(existingLabels = getTokensOnGrid()) {
   const existingTokens = new Set(existingLabels);
+
+  initiativeGroups = initiativeGroups
+    .map(group => {
+      const remainingMembers = group.members.filter(member =>
+        existingTokens.has(member) && !tokenData[member]?.dead
+      );
+
+      if (remainingMembers.length === 1 && hasInitiativeScore(group.initiative)) {
+        initiativeValues[remainingMembers[0]] = Number(group.initiative);
+      }
+
+      return {
+        ...group,
+        members: remainingMembers
+      };
+    })
+    .filter(group => group.members.length > 1);
 
   initiativeEntries = initiativeEntries
     .map(entry => {
@@ -1184,6 +2052,41 @@ function cleanInitiativeEntries(existingLabels = getTokensOnGrid()) {
   }
 }
 
+function removeMemberFromInitiativeEntry(entryIndex, memberLabel) {
+  const entry = initiativeEntries[entryIndex];
+
+  if (!entry) {
+    return;
+  }
+
+  initiativeValues[memberLabel] = entry.initiative;
+  removeLabelFromInitiative(memberLabel);
+  addHistoryLog(`Removed ${memberLabel} from initiative group.`);
+  refreshCombatUI();
+}
+
+function removeInitiativeEntry(index) {
+  const activeKey = getActiveEntryKey();
+  const activeMember = getActivePrimaryMember();
+  const entry = initiativeEntries[index];
+
+  if (!entry) {
+    return;
+  }
+
+  entry.members.forEach(member => {
+    initiativeValues[member] = entry.initiative;
+  });
+
+  const removedName = entry.members.map(getCompactLabel).join(" / ");
+  initiativeGroups = initiativeGroups.filter(group => getEntryKey(group) !== getEntryKey(entry));
+  initiativeEntries.splice(index, 1);
+  addHistoryLog(`Removed ${removedName} from initiative.`);
+
+  restoreTurnIndex(activeKey, activeMember);
+  refreshCombatUI();
+}
+
 function renderInitiativeList() {
   elements.initiativeList.innerHTML = "";
 
@@ -1204,9 +2107,30 @@ function renderInitiativeList() {
     }
 
     const label = document.createElement("span");
-    label.textContent = `${index + 1}. ${entry.members
-      .map(getCompactLabel)
-      .join(" / ")}`;
+    label.className = "turn-label";
+    const labelText = `${index + 1}. ${entry.members.map(getCompactLabel).join(" / ")}`;
+    label.textContent = labelText;
+    label.title = labelText;
+
+    row.appendChild(label);
+
+    if (entry.members.length > 1) {
+      const memberTools = document.createElement("div");
+      memberTools.className = "turn-member-tools";
+
+      entry.members.forEach(member => {
+        const memberButton = document.createElement("button");
+        memberButton.type = "button";
+        memberButton.className = "member-remove";
+        memberButton.textContent = `− ${member}`;
+        memberButton.title = `Remove ${getCompactLabel(member)} from this group`;
+        memberButton.setAttribute("aria-label", `Remove ${getDisplayName(member)} from this group`);
+        memberButton.addEventListener("click", () => removeMemberFromInitiativeEntry(index, member));
+        memberTools.appendChild(memberButton);
+      });
+
+      row.appendChild(memberTools);
+    }
 
     const initiativeScore = document.createElement("strong");
     initiativeScore.className = "turn-initiative";
@@ -1216,23 +2140,10 @@ function renderInitiativeList() {
     removeButton.type = "button";
     removeButton.className = "remove-entry";
     removeButton.textContent = "×";
-    removeButton.setAttribute("aria-label", `Remove ${label.textContent} from initiative`);
+    removeButton.setAttribute("aria-label", `Remove ${labelText} from initiative`);
+    removeButton.addEventListener("click", () => removeInitiativeEntry(index));
 
-    removeButton.addEventListener("click", () => {
-      entry.members.forEach(member => {
-        initiativeValues[member] = entry.initiative;
-      });
-
-      initiativeEntries.splice(index, 1);
-
-      if (currentTurnIndex >= initiativeEntries.length) {
-        currentTurnIndex = 0;
-      }
-
-      refreshCombatUI();
-    });
-
-    row.append(label, initiativeScore, removeButton);
+    row.append(initiativeScore, removeButton);
     elements.initiativeList.appendChild(row);
   });
 }
@@ -1311,6 +2222,7 @@ function handleConfirmTieOrder() {
   const entryMap = new Map(
     currentTieGroup.map(entry => [getEntryKey(entry), entry])
   );
+  const tieKeys = new Set(entryMap.keys());
 
   const orderedEntries = Array.from(
     elements.tieOrderList.querySelectorAll(".tie-row")
@@ -1318,12 +2230,20 @@ function handleConfirmTieOrder() {
     .map(row => entryMap.get(row.dataset.entryKey))
     .filter(Boolean);
 
-  const tieInitiative = currentTieGroup[0].initiative;
   const tiedIndices = pendingSortedEntries
     .map((entry, index) =>
-      entry.initiative === tieInitiative ? index : -1
+      tieKeys.has(getEntryKey(entry)) ? index : -1
     )
     .filter(index => index >= 0);
+
+  if (orderedEntries.length !== tiedIndices.length) {
+    alert("The tie order could not be confirmed. Please try sorting initiative again.");
+    pendingTieGroups = [];
+    pendingSortedEntries = [];
+    hideTieResolver();
+    refreshCombatUI();
+    return;
+  }
 
   tiedIndices.forEach((index, orderIndex) => {
     pendingSortedEntries[index] = orderedEntries[orderIndex];
@@ -1336,23 +2256,34 @@ function handleConfirmTieOrder() {
 
   initiativeEntries = pendingSortedEntries;
   pendingSortedEntries = [];
-  currentTurnIndex = 0;
+  restoreTurnIndex(pendingActiveEntryKey);
+  pendingActiveEntryKey = "";
   hideTieResolver();
+  openTurnOrderPanel();
+  addHistoryLog("Resolved initiative tie breaker.");
   refreshCombatUI();
 }
 
 function handleSortInitiative() {
+  const activeKeyBeforeSort = getActiveEntryKey();
+  const activeMemberBeforeSort = getActivePrimaryMember();
   const existingLabels = new Set(getTokensOnGrid());
-  const groupedMembers = new Set(
-    initiativeEntries.flatMap(entry => entry.members)
-  );
 
   elements.initiativeSetup
     .querySelectorAll(".initiative-input")
     .forEach(input => {
       const label = input.dataset.token;
+      const groupId = input.dataset.groupId;
 
-      if (!label || groupedMembers.has(label)) {
+      if (groupId) {
+        const group = initiativeGroups.find(existing => existing.id === groupId);
+        if (group) {
+          group.initiative = input.value === "" ? "" : Number(input.value);
+        }
+        return;
+      }
+
+      if (!label || !existingLabels.has(label) || tokenData[label]?.dead) {
         return;
       }
 
@@ -1363,28 +2294,51 @@ function handleSortInitiative() {
       }
     });
 
-  const groups = initiativeEntries.filter(entry => entry.members.length > 1);
-  const individuals = Object.entries(initiativeValues)
-    .filter(([label]) => existingLabels.has(label) && !groupedMembers.has(label))
+  initiativeGroups = initiativeGroups
+    .map(group => ({
+      ...group,
+      members: group.members.filter(member => existingLabels.has(member) && !tokenData[member]?.dead)
+    }))
+    .filter(group => group.members.length > 1);
+
+  const groupedMembers = new Set(initiativeGroups.flatMap(group => group.members));
+  const groupEntries = initiativeGroups
+    .filter(group => hasInitiativeScore(group.initiative))
+    .map(group => ({
+      name: group.members.join(" / "),
+      members: [...group.members],
+      initiative: Number(group.initiative)
+    }));
+
+  const individualEntries = Object.entries(initiativeValues)
+    .filter(([label, initiative]) =>
+      existingLabels.has(label) &&
+      !groupedMembers.has(label) &&
+      !tokenData[label]?.dead &&
+      Number.isFinite(Number(initiative))
+    )
     .map(([label, initiative]) => ({
       name: label,
       members: [label],
       initiative: Number(initiative)
     }));
 
-  initiativeEntries = [...groups, ...individuals].sort(
+  initiativeEntries = [...groupEntries, ...individualEntries].sort(
     (first, second) => second.initiative - first.initiative
   );
 
   pendingTieGroups = findInitiativeTies(initiativeEntries);
   pendingSortedEntries = [...initiativeEntries];
+  pendingActiveEntryKey = activeKeyBeforeSort;
 
   if (pendingTieGroups.length > 0) {
     showTieResolver(pendingTieGroups[0]);
     return;
   }
 
-  currentTurnIndex = 0;
+  restoreTurnIndex(activeKeyBeforeSort, activeMemberBeforeSort);
+  openTurnOrderPanel();
+  addHistoryLog("Sorted initiative.");
   refreshCombatUI();
 }
 
@@ -1398,18 +2352,12 @@ function handleGroupSelected() {
     return;
   }
 
-  const input = prompt(`Initiative for ${selected.map(getCompactLabel).join(" / ")}:`);
-
-  if (input === null || input.trim() === "") {
-    return;
-  }
-
-  const initiative = Number(input);
-
-  if (!Number.isFinite(initiative)) {
-    alert("Enter a valid initiative number.");
-    return;
-  }
+  initiativeGroups = initiativeGroups
+    .map(group => ({
+      ...group,
+      members: group.members.filter(member => !selected.includes(member))
+    }))
+    .filter(group => group.members.length > 1);
 
   initiativeEntries = initiativeEntries.filter(entry =>
     !entry.members.some(member => selected.includes(member))
@@ -1419,16 +2367,33 @@ function handleGroupSelected() {
     delete initiativeValues[label];
   });
 
-  initiativeEntries.push({
-    name: selected.join(" / "),
+  initiativeGroups.push({
+    id: `group-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     members: selected,
-    initiative
+    initiative: ""
   });
 
-  initiativeEntries.sort(
-    (first, second) => second.initiative - first.initiative
-  );
+  addHistoryLog(`Prepared initiative group: ${selected.map(getCompactLabel).join(" / ")}.`);
+  openInitiativeSetupPanel();
+  refreshCombatUI();
+}
+
+function handleClearInitiative() {
+  const confirmed = confirm("Clear initiative order and entered initiative values? Tokens and map content will stay on the grid.");
+
+  if (!confirmed) {
+    return;
+  }
+
+  initiativeEntries = [];
+  initiativeValues = {};
+  initiativeGroups = [];
   currentTurnIndex = 0;
+  pendingTieGroups = [];
+  pendingSortedEntries = [];
+  pendingActiveEntryKey = "";
+  hideTieResolver();
+  addHistoryLog("Cleared initiative.");
   refreshCombatUI();
 }
 
@@ -1438,6 +2403,8 @@ function handleNextTurn() {
   }
 
   currentTurnIndex = (currentTurnIndex + 1) % initiativeEntries.length;
+  const activeName = getActiveMembers().map(getCompactLabel).join(" / ");
+  addHistoryLog(`Next turn: ${activeName}.`);
   refreshCombatUI();
 }
 
@@ -1522,7 +2489,15 @@ function bindEvents() {
     [elements.waterTool, "water"],
     [elements.houseTool, "house"],
     [elements.stairsTool, "stairs"],
-    [elements.chestTool, "chest"]
+    [elements.chestTool, "chest"],
+    [elements.treeCanopyTool, "treeCanopy"],
+    [elements.boulderTool, "boulder"],
+    [elements.stoneFormationTool, "stoneFormation"],
+    [elements.brushThicketTool, "brushThicket"],
+    [elements.ruinedWallTool, "ruinedWall"],
+    [elements.stonePillarTool, "stonePillar"],
+    [elements.crateStackTool, "crateStack"],
+    [elements.pondTool, "pond"]
   ];
 
   toolBindings.forEach(([button, toolName]) => {
@@ -1534,9 +2509,51 @@ function bindEvents() {
   elements.saveMap.addEventListener("click", handleSaveMap);
   elements.loadMap.addEventListener("click", handleLoadMap);
   elements.deleteMap.addEventListener("click", handleDeleteMap);
+  elements.exportData.addEventListener("click", handleExportData);
+  elements.importData.addEventListener("click", handleImportData);
+  elements.importDataFile.addEventListener("change", handleImportDataFile);
+  elements.sceneTheme.addEventListener("change", handleSceneThemeChange);
+  elements.resetSceneTheme.addEventListener("click", handleResetSceneTheme);
+
+  elements.toggleSidebar.addEventListener("click", () => {
+    const collapsed = elements.appLayout.classList.toggle("left-collapsed");
+    elements.sidebarPanel.classList.toggle("collapsed", collapsed);
+    elements.toggleSidebar.textContent = collapsed ? "›" : "‹";
+    elements.toggleSidebar.setAttribute("aria-label", collapsed ? "Expand map controls" : "Collapse map controls");
+    scheduleGridFit();
+  });
+
+  elements.toggleTracker.addEventListener("click", () => {
+    const collapsed = elements.appLayout.classList.toggle("right-collapsed");
+    elements.rightPanel.classList.toggle("collapsed", collapsed);
+    elements.toggleTracker.textContent = collapsed ? "‹" : "›";
+    elements.toggleTracker.setAttribute("aria-label", collapsed ? "Expand combat tracker" : "Collapse combat tracker");
+    scheduleGridFit();
+  });
+
+  elements.turnOrderPanel.addEventListener("toggle", () => {
+    if (elements.turnOrderPanel.open) {
+      document.querySelector(".initiative-setup-panel")?.removeAttribute("open");
+    }
+  });
+
+  document.querySelector(".initiative-setup-panel")?.addEventListener("toggle", event => {
+    if (event.currentTarget.open) {
+      elements.turnOrderPanel.removeAttribute("open");
+    }
+  });
+
+  elements.dmNotesText.addEventListener("input", () => {
+    localStorage.setItem(DM_NOTES_KEY, elements.dmNotesText.value);
+  });
+
+  elements.dmNotesTab.addEventListener("click", () => setDmWorkspaceTab("notes"));
+  elements.dmHistoryTab.addEventListener("click", () => setDmWorkspaceTab("history"));
+  elements.toggleDmWorkspace.addEventListener("click", toggleDmWorkspace);
 
   elements.groupSelected.addEventListener("click", handleGroupSelected);
   elements.sortInitiative.addEventListener("click", handleSortInitiative);
+  elements.clearInitiative.addEventListener("click", handleClearInitiative);
   elements.nextTurn.addEventListener("click", handleNextTurn);
   elements.confirmTieOrder.addEventListener("click", handleConfirmTieOrder);
 
@@ -1577,6 +2594,8 @@ function bindEvents() {
 
 function initializeApp() {
   bindEvents();
+  applySceneTheme(currentSceneTheme);
+  initializeDmWorkspace();
   createGrid();
   refreshMapList();
   refreshCombatUI();

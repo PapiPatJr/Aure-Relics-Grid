@@ -19,6 +19,7 @@ function assert(condition, message) {
 
 const packageJson = JSON.parse(read('package.json'));
 const indexHtml = read('index.html');
+const viteConfig = read('vite.config.js');
 const mainJs = read('src/main.js');
 const legacyBootstrap = read('src/app/legacyBootstrap.js');
 const styleCss = read('style.css');
@@ -28,7 +29,9 @@ assert(packageJson.scripts.build === 'vite build', 'package.json must define the
 assert(packageJson.scripts.preview === 'vite preview --host 127.0.0.1', 'package.json must define the Vite preview script.');
 assert(Boolean(packageJson.devDependencies?.vite), 'package.json must include Vite as a dev dependency.');
 
-assert(indexHtml.includes('<script type="module" src="/src/main.js"></script>'), 'index.html must load the Vite module entry.');
+assert(indexHtml.includes('<script src="script.js"></script>') || indexHtml.includes('<script type="module" src="/src/main.js"></script>'), 'index.html must keep a legacy script tag or load the Vite module entry.');
+assert(viteConfig.includes('transformIndexHtml'), 'vite.config.js must bridge the legacy script tag into the Vite module entry.');
+assert(viteConfig.includes('/src/main.js'), 'vite.config.js must point the Vite bridge at /src/main.js.');
 assert(indexHtml.includes('href="style.css"'), 'index.html must keep the current stylesheet reference.');
 assert(indexHtml.includes('./images/Logo-symbol.png'), 'index.html must keep the local symbol logo path.');
 assert(indexHtml.includes('./images/Logo-banner.png'), 'index.html must keep the local banner logo path.');

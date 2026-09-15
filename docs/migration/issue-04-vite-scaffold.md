@@ -12,7 +12,7 @@ The goal of this issue is a safe runway, not a feature rewrite. The current play
 - Added `vite.config.js`.
 - Added `src/main.js` as the Vite entry point.
 - Added `src/app/legacyBootstrap.js` as a temporary bridge to the existing root-level `script.js`.
-- Updated `index.html` to load `/src/main.js` as a module.
+- Added a Vite `transformIndexHtml` bridge that replaces the legacy script tag with `/src/main.js` during Vite dev/build. The root `index.html` remains otherwise unchanged for safe migration.
 - Added `.env.example` with reserved Supabase variables for issue #5.
 - Added `scripts/verify-vite-scaffold.mjs` for a fast local sanity check.
 
@@ -56,4 +56,4 @@ Codex should verify:
 - `npm run build` succeeds.
 - The Vite dev app preserves the current v0.5.2 user experience.
 
-If the imported legacy script fails under module loading, the fallback path is to create `public/legacy-script.js` as a copy of the current `script.js` and load it as a classic script during the bridge phase. Do not begin a major refactor inside issue #4 unless the build fails and this fallback is insufficient.
+If the imported legacy script fails under module loading, the fallback path is to load the current `script.js` as a classic script during the bridge phase and keep the module entry focused on future v0.9 code. Do not begin a major refactor inside issue #4 unless the build fails and this fallback is insufficient.

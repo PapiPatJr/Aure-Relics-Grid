@@ -8,8 +8,12 @@ export default defineConfig({
   plugins: [
     {
       name: 'aure-relics-legacy-entry-bridge',
-      transformIndexHtml(html) {
-        return html.replace(legacyScriptTag, viteModuleScriptTag);
+      transformIndexHtml: {
+        // Expose the module entry before Vite discovers and bundles HTML scripts.
+        order: 'pre',
+        handler(html) {
+          return html.replace(legacyScriptTag, viteModuleScriptTag);
+        }
       }
     }
   ],

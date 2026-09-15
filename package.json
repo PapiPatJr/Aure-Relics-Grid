@@ -1,0 +1,25 @@
+{
+  "name": "aure-relics-grid",
+  "version": "0.9.0-alpha.0",
+  "private": true,
+  "description": "Aure Relics Battle Grid v0.9 scaffold using Vite and plain JavaScript.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "check": "node scripts/verify-vite-scaffold.mjs"
+  },
+  "keywords": [
+    "aure-relics",
+    "battle-grid",
+    "tabletop",
+    "vite"
+  ],
+  "author": "FlowForge LLC",
+  "license": "UNLICENSED",
+  "dependencies": {},
+  "devDependencies": {
+    "vite": "^5.4.14"
+  }
+}

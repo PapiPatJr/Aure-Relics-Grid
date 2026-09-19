@@ -187,6 +187,21 @@ changes and never broadcast private rows, secrets, exact HP or unsanitized snaps
 6. Repeat advisor checks and DM/guest API/Storage checks on the development project
    before production use. Do not point the local-only test runner at a hosted project.
 
-No manual dashboard SQL or bucket creation is required. A browser UI smoke test of
-login/join remains for those later UI issues; current verification uses real API
-sessions without introducing UI.
+No manual dashboard SQL or bucket creation is required.
+
+## Issue #6 enrollment and entry UI
+
+The enrollment migration adds session display names and six narrowly scoped RPCs:
+`issue_session_code`, `revoke_session_code`, `request_session_join`,
+`review_session_guest`, `get_guest_lobby`, and `get_session_roster`. Existing RLS,
+private data separation, storage policies, and unpublished Realtime are unchanged.
+Invitations expire in 24 hours; only hashes are stored. Rejected/revoked identities
+cannot restore access by redeeming a code. Removing a player revokes that session,
+not other approved sessions in the same campaign.
+
+`npm.cmd run test:api` now runs both foundation and enrollment tests with independent
+real Auth clients. See [issue #6 verification](../docs/testing/issue-06-verification.md)
+for the full RPC contract, hosted setup limits, test results, and required manual
+two-browser smoke. The UI uses anonymous Auth but does not yet supply CAPTCHA tokens;
+do not enable mandatory CAPTCHA before integrating its client flow. Configure abuse
+controls before a public rollout. No hosted Auth settings were changed automatically.

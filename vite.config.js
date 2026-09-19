@@ -12,7 +12,9 @@ export default defineConfig({
         // Expose the module entry before Vite discovers and bundles HTML scripts.
         order: 'pre',
         handler(html) {
-          return html.replace(legacyScriptTag, viteModuleScriptTag);
+          return html.replace(legacyScriptTag, viteModuleScriptTag)
+            // Raw index.html retains its original offline launch. Vite starts gated.
+            .replace('<div id="legacyBoard">', '<div id="legacyBoard" hidden>');
         }
       }
     }

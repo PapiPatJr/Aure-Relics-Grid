@@ -10,6 +10,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "check": "node scripts/verify-vite-scaffold.mjs && node --test tests/*.test.js",
     "test:db": "supabase test db",
+    "test:api": "node scripts/test-supabase-api.mjs",
     "db:start": "supabase start",
     "db:reset": "supabase db reset --local"
   },

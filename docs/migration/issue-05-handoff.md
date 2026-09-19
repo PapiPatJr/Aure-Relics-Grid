@@ -1,61 +1,63 @@
-# Issue #5 handoff — 2026-09-17
+# Issue #5 verification handoff — 2026-09-19
 
-## Status
+Supersedes the incomplete 2026-09-17 checkpoint. Resumed from `f9d47d7` on
+`v0.9-issue-05-supabase-foundation`, with merged main `11069ef` as the base.
+The checkpoint was pushed before continuing. Issue #5 is ready for PR review;
+no issue #6 UI or gameplay feature work was started.
 
-Paused at the user's usage-limit checkpoint. Issue #5 is incomplete and not ready
-for PR. No issue #6 work or gameplay feature work started.
+## Completed
 
-Branch: `v0.9-issue-05-supabase-foundation`
+- Preserved the checkpoint's lazy client and environment validation.
+- Added two reproducible migrations with 26 application tables, composite campaign
+  foreign keys, default-hidden map records, private exact HP/notes/code hashes,
+  RLS on every table, typed HP RPCs and approved-session character reclaim.
+- Added three private storage buckets with campaign/session/character-scoped policies.
+- Added 81 pgTAP security assertions and 22 real Auth/REST/RPC/Storage API checks.
+- Documented policies, schema, code lifecycle, future Realtime constraints and hosted
+  setup in [supabase/README.md](../../supabase/README.md).
+- Current board HTML/JS/CSS/assets and client implementation remain unchanged;
+  production bundle/asset hashes match the checkpoint build.
 
-Checkout: `C:\Users\patlo\Desktop\Aure Relics\aure-relics-issue-04`
+## Verification performed
 
-Base: merged main at `11069ef` (includes PR #15). Do not resume in the older
-`aure-relics-grid` prototype folder.
+- Local Supabase start succeeded on the Aure Relics 5632x port range.
+- `npm.cmd run db:reset` recreated the database and applied both migrations;
+  final tests ran after that clean reset.
+- `npm.cmd run test:db`: **81 passed**, including denial cases and no private
+  data/hidden objects in guest results. Fixtures roll back.
+- `npm.cmd run test:api`: **22 passed**, using independent real DM/anonymous guest
+  JWT sessions and Storage uploads/downloads. Temporary fixtures were cleaned up.
+- `supabase db lint --local --schema public,private --fail-on warning`: no errors.
+- `supabase db advisors --local --type security --level warn --fail-on error`: no issues.
+- `npm.cmd install`, `npm.cmd run check` (four JS tests + scaffold), and
+  `npm.cmd run build`: passed. `npm.cmd audit`: zero vulnerabilities.
+- Independent static security review found no remaining blockers.
 
-## Complete
+## Resolved failures
 
-- Read issue #5 completely, architecture/spec, work packages, and testing docs.
-- Created issue #5 branch from latest main.
-- Added a lazy opt-in Supabase client and safe environment validation with four tests.
-- Pinned Supabase client/CLI dependencies; updated lockfile, env example and ignores.
-- Generated local CLI configuration: public-only API, explicit grants required,
-  anonymous guest identities enabled, localhost Vite redirect settings.
-- Wrote an implementation plan; its database design remains a proposal, not tested SQL.
-- Removed the generated empty migration to avoid implying a schema exists.
+- Port 54322 belonged to `supabase_db_foundation-household-access`. Left untouched.
+- Windows reserves 55295–55394; configured free 56320–56329 instead.
+- Fixed SQL reserved parameter naming and test CTE syntax.
+- A denial test caught fog coordinate parameter shadowing; explicit `p_*` names
+  fixed it and REST tests independently verify fogged NPCs are absent.
+- Adjusted storage SQL tests to the Storage API's delete context; API tests verify
+  actual policy behavior independently.
+- Review aligned code reuse with the spec; codes remain reusable until expiry,
+  rotation or revocation.
 
-## Remaining
+## Remaining boundaries / manual setup
 
-- All database migrations, composite campaign foreign keys, ownership and membership rules.
-- Sessions, characters/rejoin code foundation, locations/levels, board/session state,
-  fog/terrain/map effect records, private enemy HP and DM information separation.
-- Private character/map/terrain storage buckets and scoped object policies.
-- Real RLS/security tests, fresh-reset verification, advisors/lint and hosted setup notes.
-- Review the code/rejoin scope decision in the plan against issue #5 before implementation.
-  Later join UI/services must not rely on permissive placeholder grants.
-- Manual browser Auth/Storage tests once backend foundations are available.
+- Existing esbuild install-script approval warning remains; install/build succeed.
+- No hosted project was changed. Patrick must configure hosted Auth/API settings,
+  apply migrations and set public client environment values as documented.
+- UI/browser flows are untested because login/join UI is deliberately deferred;
+  actual API sessions cover backend authorization now.
+- Private map/terrain assets and rotated terrain remain withheld from guests until
+  later tested publication/geometry services. Realtime tables remain unpublished.
+- Revocation cannot erase already downloaded data or immediately invalidate an
+  existing signed URL; future UI must refresh/invalidate cached visibility state.
+- Hash-only code storage permits regeneration, not retrieval of old plaintext.
 
-## Tests and known failures
+## Next action
 
-- Final `npm.cmd run check` passed: scaffold checks and all four client/environment tests.
-- Final `npm.cmd run build` passed; the legacy app bundle and asset hashes are unchanged.
-- Final `npm.cmd audit --json` reported zero vulnerabilities. Dependency installation succeeded.
-- Local Supabase startup failed: Docker port `54322` is already allocated.
-  No migration or RLS test ran; no hosted project was touched.
-- npm reports the existing esbuild install-script approval warning.
-- Initial client test run failed because the new modules did not exist; it passed
-  after implementation.
-
-## Exact next step Friday
-
-1. In the checkout above, run `git status` and confirm the issue #5 branch.
-2. Read this note and `docs/superpowers/plans/2026-09-17-issue-05-supabase-foundation.md`.
-3. Run `docker ps --format "table {{.Names}}\t{{.Ports}}"`; choose unused local
-   API/database/shadow/Studio/mail ports in `supabase/config.toml` for this project.
-   Do not stop or reset another project. Update the documented local URL if changed.
-4. Run `npm.cmd exec -- supabase start -x studio,imgproxy,edge-runtime,logflare,vector,supavisor,realtime`.
-5. Generate the first migration with `npm.cmd exec -- supabase migration new v09_foundation`.
-   Add failing role-based database tests, implement the schema/RLS, then prove fresh
-   rebuild and guest/DM isolation. Keep the legacy board entrypoint untouched.
-
-Only after these remaining pieces are implemented and verified should issue #5
-be considered ready for a PR.
+Review this issue #5 branch as a PR. Do not start issue #6 without a separate request.

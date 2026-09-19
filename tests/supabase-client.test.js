@@ -24,7 +24,7 @@ test('rejects partial config, non-HTTPS remote URLs and privileged or malformed 
   }
 });
 test('permits HTTP for local Supabase and returns a reusable lazy client', () => {
-  const env = { VITE_SUPABASE_URL: 'http://127.0.0.1:54321', VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test' };
+  const env = { VITE_SUPABASE_URL: 'http://127.0.0.1:56321', VITE_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_test' };
   const client = getSupabaseClient(env);
   assert.equal(client, getSupabaseClient(env));
   assert.equal(typeof client.from, 'function');

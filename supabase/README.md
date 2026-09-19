@@ -1,55 +1,192 @@
-# Supabase foundation — issue #5 checkpoint
+# Aure Relics v0.9 Supabase foundation (issue #5)
 
-This is an incomplete foundation checkpoint. No application schema, RLS policies,
-storage buckets, code redemption, or hosted project changes have been applied.
-Issue #5 is **not ready for PR or closure**.
+This package defines the database and authorization contract. It does not connect
+the legacy board to Supabase or add login/join/campaign/fog/movement UI.
 
-## Completed setup
+## Local setup and verification
 
-- Pinned `@supabase/supabase-js` 2.116.0 and Supabase CLI 2.117.0 in the lockfile.
-- Use Node.js 22 or newer (tested on 24.19.0; required by the pinned client).
-- `src/supabase/client.js` exports lazy `getSupabaseClient()`. Missing configuration
-  returns `null`; invalid/partial configuration throws without echoing the key.
-- `src/supabase/config.js` accepts publishable keys and legacy anon-role JWTs,
-  rejects privileged keys, and requires HTTPS except for loopback development.
-  This is configuration validation, not JWT signature verification; Supabase
-  performs actual authentication and RLS must authorize every request.
-- The legacy board does not import the new client. No sign-in or network behavior
-  has been added to the board. Branding, assets, placement and movement are intact.
-- CLI configuration exposes only `public`, disables automatic table grants, and
-  enables anonymous Auth identities for future guests. No guest enrollment exists.
-
-## Environment
-
-Copy `.env.example` to ignored `.env.local` when a project is ready. Supply
-`VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`; legacy
-`VITE_SUPABASE_ANON_KEY` is a fallback. Leave all blank for local board mode.
-
-Every `VITE_*` variable can be compiled into frontend code. Never put a service-role
-key, secret key, database password, or CLI token in these variables. Runtime key
-validation cannot undo a secret accidentally embedded in a bundle.
-
-Hosted setup is not required at this checkpoint. Before future hosted testing,
-Patrick must select/create a dedicated development project, configure Auth site
-and redirect URLs, enable anonymous sign-ins with CAPTCHA/rate limiting, and keep
-private schemas unexposed. Bucket and RLS setup must come from the completed,
-tested migrations rather than manual permissive policies.
-
-## Checks and local development
+Use Node.js 22+ (tested on 24.19.0), Docker, and the pinned CLI from `npm install`.
 
 ```powershell
 npm.cmd install
+npm.cmd exec -- supabase start -x studio,imgproxy,edge-runtime,logflare,vector,supavisor,realtime
+npm.cmd run db:reset
+npm.cmd run test:db
+npm.cmd run test:api
+npm.cmd exec -- supabase db lint --local --schema public,private --fail-on warning
+npm.cmd exec -- supabase db advisors --local --type security --level warn --fail-on error
 npm.cmd run check
 npm.cmd run build
-npm.cmd run db:start
+npm.cmd audit
 ```
 
-Docker must be available to the CLI. Default ports 54320–54324 can conflict with
-other projects. Startup currently fails because port 54322 is occupied. Choose
-unused ports in `config.toml` before retrying; do not stop another project's stack.
+`db:reset` erases only this local test project's database. Verify project ID
+`aure-relics-v09-foundation` before running it. Neither test command targets a
+hosted project. SQL fixtures roll back; API tests create and delete their own users,
+campaigns, and image. The API runner reads local CLI credentials in memory and
+refuses any API URL other than `http://127.0.0.1:56321`. Administrative credentials
+are used only by that local test runner to create/delete users and clean up files.
 
-`db:reset` and `test:db` are CLI conveniences for the remaining migration work.
-There are no migrations or database tests yet, so neither currently proves RLS.
-Only run a reset on this isolated local test project after confirming its identity.
+### Local ports
 
-See [the handoff](../docs/migration/issue-05-handoff.md) for exact resume steps.
+| Service | Port |
+| --- | --- |
+| Shadow database | 56320 |
+| API/Auth/Storage | 56321 |
+| Database | 56322 |
+| Studio (optional) | 56323 |
+| Test mail | 56324 |
+| Analytics (optional) | 56327 |
+| Pooler (disabled) | 56329 |
+
+`54322` is occupied by `supabase_db_foundation-household-access`; that project was
+left untouched. Windows reserves `55295–55394`, so the first proposed 5532x range
+was rejected. The configured 5632x ports were checked and the stack started there.
+
+## Frontend environment
+
+Copy `.env.example` to ignored `.env.local`. Supply `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_PUBLISHABLE_KEY`; `VITE_SUPABASE_ANON_KEY` is a compatibility fallback.
+Leave them blank for offline mode. `getSupabaseClient()` returns null without
+configuration, throws for partial/invalid configuration, and creates one lazy
+client when requested. The legacy entrypoint does not import it.
+
+Every `VITE_*` value can be compiled into the browser. Never put a service-role
+JWT, `sb_secret_` key, database password or CLI access token there. Key validation
+is an early configuration check, not authentication or a replacement for RLS.
+Supabase validates actual JWT signatures; database policies authorize each request.
+
+## Schema and relationships
+
+`campaigns.owner_id` references a permanent Auth identity. Anonymous Auth users
+cannot create/own campaigns. Ownership is checked against `auth.users`, not
+user-editable metadata. DMs do not automatically see campaigns owned by another DM.
+
+| Schema | Tables | Purpose |
+| --- | --- | --- |
+| public | profiles | Self-only display names |
+| public | campaigns, campaign_members | Ownership and pending/approved/revoked membership |
+| public | sessions, session_players, session_state | Session approval, assigned characters, active level, round/revision |
+| public | characters | Player-character shared HP/AC/speed/status fields; never enemy/NPC/boss HP |
+| public | locations, levels | Campaign map hierarchy, grid/theme and inherited fog defaults |
+| public | tokens | Position/type/visibility and public condition label, no exact HP |
+| public | terrain_objects, fog_cells, map_effects | Typed public fields, default-hidden content and per-cell revelation |
+| public | initiative_entries | Session/token-linked public order, filtered by token visibility |
+| private | token_details, character_details, terrain_details, map_effect_details | Exact HP, private sheets/notes/metadata and effect mechanics |
+| private | fog_areas, dm_notes, session_snapshots | Named fog geometry, DM notes and versioned full snapshots |
+| private | movement_paths, activity_feed | Future path records and DM-only events (no movement feature) |
+| private | campaign_codes, session_codes, character_codes | Expiring/revocable SHA-256 code hashes |
+
+There are **26 application tables**. Hazards, traps and difficult terrain are
+distinct `map_effects.kind` values, matching issue #5's table name, with sensitive
+trigger/detection/damage/state details in `private.map_effect_details`. Likewise,
+`activity_feed` is issue #5's name for the spec's activity/event log.
+
+Foreign keys include `campaign_id` alongside child IDs so a DM cannot attach a
+level, token, character, session player or effect to another campaign's parent.
+Session player membership also references `(campaign_id,user_id)`. Character
+assignment is unique per session. Membership status changes immediately affect
+subsequent reads without waiting for JWT refresh.
+
+## RLS and visibility contract
+
+- All 26 tables enable RLS. Only authenticated has explicit CRUD grants, subject
+  to policies; bare `anon` has no application table or RPC access.
+- Anonymous Auth gives guests an authenticated JWT identity, not permissions.
+  Campaign approval **and** session approval **and** a nonclosed session are needed.
+  Direct self-enrollment, self-approval, owner changes and official-state writes fail.
+- DMs can CRUD their own campaign records. Players currently have read-only official
+  state access; card/movement write services belong to later issues.
+- Players see only their approved joined sessions, active levels, shared approved
+  assigned player characters and revealed objects. They cannot enumerate unrelated
+  memberships or sessions, even within their campaign.
+- Fog inherits level → location → campaign. Under fog, an object's entire bounding
+  rectangle must be revealed. Hidden flags also apply when fog is disabled. Rotated
+  terrain is conservatively withheld from players until later geometry work defines
+  a tested rotated footprint. Named areas and private geometry are never shared.
+- Private data remains protected by DM-only RLS even if queried through a SQL role.
+  Only `public` is exposed to REST. `get_token_details` / `save_token_details` are
+  typed invoker RPCs; private table RLS prevents a player or other DM using them.
+- Definer helpers live in `private`, have an empty search path and identity checks,
+  and avoid recursive membership policies. Public RPC wrappers are invoker functions.
+
+## Character codes and approved reclaim
+
+The future guest join service must first create/approve membership and session
+access under DM authority. No permissive join endpoint is included here.
+`campaign_codes` and `session_codes` are hash/expiry/revocation foundations for that
+service, not an implemented self-join flow.
+
+```js
+// DM: approved player character; returned secret is displayed only to its recipient.
+await client.rpc('issue_character_code', { p_character: characterId });
+// Approved guest: cannot enroll or approve themselves by calling this.
+await client.rpc('reclaim_character', {
+  p_session: sessionId, p_character: characterId, p_code: savedCode
+});
+await client.rpc('revoke_character_code', { p_character: characterId }); // DM only effect
+```
+
+Codes contain 32 cryptographically random bytes, encoded as 64 hex characters.
+Only SHA-256 hashes are stored, with a 30-day lifetime. The plaintext is returned
+once and cannot be recovered from the database; DM recovery regenerates a code.
+This intentionally avoids storing a recoverable credential for the future copy UI.
+Saved codes are reusable until expiry, revocation or regeneration. Reclaim checks
+the character's campaign and approval, locks the code, clears prior controller
+assignments across sessions and assigns the caller in the requested approved session.
+An event is recorded without the secret. Revoking a code prevents future reclaim;
+revoke membership/session access separately to remove current data access.
+
+Treat codes as bearer secrets: do not log them or shorten them. Future human-friendly
+join codes need separate attempt limits and approval UX; this migration deliberately
+does not expose a short-code guessing endpoint.
+
+## Storage
+
+All buckets are private and accept PNG/JPEG/WebP, excluding SVG/HTML.
+
+| Bucket | Limit | Path and policies |
+| --- | --- | --- |
+| character-images | 5 MiB | `campaign/session/character/portrait.png`; approved assigned guest can insert once; approved party can read; DM can replace/delete |
+| terrain-assets | 10 MiB | `campaign/filename.png` (also jpg/jpeg/webp); owner DM CRUD |
+| map-assets | 20 MiB | Same campaign scope; owner DM CRUD |
+
+Character portrait paths have a fixed name independent of MIME to enforce one slot.
+Cross-campaign path moves are rejected by UPDATE's USING and WITH CHECK. Guests
+cannot replace/delete portraits or upload map/terrain assets. Session closure or
+membership revocation removes subsequent authenticated downloads. Reusing a portrait
+from a closed session in a new session requires a future authorized copy/publish step.
+Map/terrain player distribution is intentionally withheld until that step exists.
+
+Do not use public URLs. Signed URLs and previously downloaded data can outlive a
+permission change; prefer authenticated downloads and short-lived signed URLs only
+when the later client handles their lifetime explicitly.
+
+## Realtime boundary
+
+No application table is added to `supabase_realtime`, and no app subscription is
+created in issue #5. RLS protects REST and future authorized SELECT-based changes;
+it is not a sanitizer for arbitrary Broadcast payloads. Keep private tables out of
+player publications. Postgres DELETE events and client caches require special care:
+future subscriptions must explicitly invalidate stale objects on hide/revoke/level
+changes and never broadcast private rows, secrets, exact HP or unsanitized snapshots.
+
+## Hosted setup Patrick must perform
+
+1. Create/select a dedicated development project (Postgres 17, matching local config).
+2. Authenticate/link the CLI to that project. Review `supabase db push --help` and
+   inspect the migration diff before applying the committed migrations. No hosted
+   database was modified by this work; all tables/buckets/policies come from migrations.
+3. In Data API settings expose `public` only, never `private`; prefer disabling
+   automatic grants for new tables. The migrations explicitly grant their own access.
+4. Configure Auth's production site/redirect URLs, email delivery/verification, and
+   enable anonymous sign-ins for future guests with CAPTCHA and rate limits.
+   Local `config.toml` does not automatically configure hosted Auth/API settings.
+5. Put only the project URL and publishable key in deployment environment variables.
+   Keep Realtime publication disabled until its assigned issue and security tests.
+6. Repeat advisor checks and DM/guest API/Storage checks on the development project
+   before production use. Do not point the local-only test runner at a hosted project.
+
+No manual dashboard SQL or bucket creation is required. A browser UI smoke test of
+login/join remains for those later UI issues; current verification uses real API
+sessions without introducing UI.

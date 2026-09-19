@@ -15,19 +15,19 @@
 - No UI, board integration, realtime subscription, movement logic, fog tools, or terrain redesign.
 - Public tables use typed player-safe columns; no unfiltered legacy JSON snapshot reaches players.
 - Hidden objects default to invisible. Visible objects also require a joined live session viewing their level and revealed fog covering their footprint.
-- Campaign/session/character code records store SHA-256 hashes of high-entropy secrets, expiration, and revocation. Only DMs manage them. Guest self-enrollment/redemption endpoints and their rate limiting belong to the later join/rejoin issues; no permissive placeholder policies.
+- Campaign/session/character code records store SHA-256 hashes of high-entropy secrets, expiration, and revocation. Only DMs manage them. The resumed issue includes an approved-session character reclaim RPC with reusable 256-bit codes; guest self-enrollment and short-code rate limiting remain for the later join issue. No permissive placeholder policies.
 - Private buckets: character-images, terrain-assets, map-assets. Character objects use campaign/session/character/filename paths. Players can upload only to their assigned approved character; map/terrain writes are DM-only. No public bucket URLs.
 - Do not add tables to Realtime publication yet. Document SELECT/RLS, revocation, DELETE-event and already-downloaded-data limits for the later subscription issue.
 
 ## Tasks
 
 - [x] Client/environment: test missing/invalid/privileged keys and lazy client creation; implement `src/supabase/config.js`, `client.js`, `.env.example`, `.gitignore`; pin dependencies. Keep src/main.js untouched.
-- [ ] Generate migration using CLI; add profiles, campaigns, campaign_members, sessions, session_players, characters, character_codes, campaign_codes, session_codes, locations, levels, tokens, terrain_objects, fog_cells, fog_areas, map_effects, initiative_entries, movement_paths, activity_feed, session_state and private detail tables.
-- [ ] RLS: authenticated-only grants, DM ownership helpers, membership/session/level/fog predicates, self-only profile reads; no guest control of memberships, ownership, official board state or codes. Explicit USING and WITH CHECK for writes.
-- [ ] Storage: scoped SELECT/INSERT/UPDATE/DELETE policies and MIME/size limits; prevent path moves across campaigns and unauthorized character replacement.
-- [ ] Database tests: fresh migration, DM A/B isolation, unaffiliated/pending/approved/revoked guests, character assignment, hidden enemy/trap/fog, private HP/notes/codes, cross-campaign foreign keys, storage policy allow/deny cases, and all tables RLS-enabled. Exercise actual Postgres roles, not mocked policy strings.
-- [ ] Recreate local database, run security tests and advisors/lint; run npm install/check/build/audit. Record exact results and any local platform limitations.
-- [ ] Document manual hosted-project Auth/API/storage setup and future join/realtime integration contracts; review diff to confirm prototype assets and behavior files unchanged.
+- [x] Generate migration using CLI; add profiles, campaigns, campaign_members, sessions, session_players, characters, character_codes, campaign_codes, session_codes, locations, levels, tokens, terrain_objects, fog_cells, fog_areas, map_effects, initiative_entries, movement_paths, activity_feed, session_state and private detail tables.
+- [x] RLS: authenticated-only grants, DM ownership helpers, membership/session/level/fog predicates, self-only profile reads; no guest control of memberships, ownership, official board state or codes. Explicit USING and WITH CHECK for writes.
+- [x] Storage: scoped SELECT/INSERT/UPDATE/DELETE policies and MIME/size limits; prevent path moves across campaigns and unauthorized character replacement.
+- [x] Database tests: fresh migration, DM A/B isolation, unaffiliated/pending/approved/revoked guests, character assignment, hidden enemy/trap/fog, private HP/notes/codes, cross-campaign foreign keys, storage policy allow/deny cases, and all tables RLS-enabled. Exercise actual Postgres roles, not mocked policy strings.
+- [x] Recreate local database, run security tests and advisors/lint; run npm install/check/build/audit. Record exact results and any local platform limitations.
+- [x] Document manual hosted-project Auth/API/storage setup and future join/realtime integration contracts; review diff to confirm prototype assets and behavior files unchanged.
 
 ## Representative acceptance assertions
 

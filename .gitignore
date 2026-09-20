@@ -5,3 +5,5 @@ dist/
 !.env.example
 supabase/.temp/
 supabase/.branches/
+test-results/
+playwright-report/

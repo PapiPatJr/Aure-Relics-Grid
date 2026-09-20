@@ -201,7 +201,8 @@ not other approved sessions in the same campaign.
 
 `npm.cmd run test:api` now runs both foundation and enrollment tests with independent
 real Auth clients. See [issue #6 verification](../docs/testing/issue-06-verification.md)
-for the full RPC contract, hosted setup limits, test results, and required manual
-two-browser smoke. The UI uses anonymous Auth but does not yet supply CAPTCHA tokens;
+for the full RPC contract, hosted setup limits, and test results. The local browser
+gate now passes with Playwright's isolated DM/guest contexts; see `tests/e2e/README.md`.
+The UI uses anonymous Auth but does not yet supply CAPTCHA tokens;
 do not enable mandatory CAPTCHA before integrating its client flow. Configure abuse
 controls before a public rollout. No hosted Auth settings were changed automatically.

@@ -35,6 +35,7 @@ The copyable credential contains campaign UUID, session UUID and the full secret
 - **131 database assertions**: 81 foundation + 50 enrollment assertions, including expired/revoked/rotated/invalid/cross-campaign/cross-session codes, anonymous identity verification, unchanged state after denial, self-approval denial, private data denial, roster visibility, closure and membership revocation.
 - **64 real API checks**: 22 foundation Auth/RPC/Storage + 42 enrollment Auth/API. Separate real DM A, DM B and guest clients; real signup/password login/logout; concurrent approve/revoke/redemption; fixtures cleaned after each run.
 - **19 JavaScript/DOM tests**: four existing configuration/client tests, eight service tests, six entry-screen tests, one static/Vite bootstrap regression test. DOM tests use jsdom, not a browser.
+- **6 real Chromium E2E tests**: three scenarios at 1440×1000 and 390×844. Playwright 1.63.0 / Chromium 153.0.8010.12. Fourteen isolated contexts per full run. All passed; fixtures cleaned successfully.
 - SQL lint for `public,private`: no errors. Local security advisors: no issues.
 - `npm.cmd run check`, production build and npm audit: pass; audit zero vulnerabilities.
 - Production preview HTTP smoke: bundled entry and legacy script chunk serve successfully; all eight referenced CSS/logo/font assets returned HTTP 200. `dist/index.html` references bundled assets, not `/src/main.js`.
@@ -56,9 +57,44 @@ npm.cmd audit
 
 The API runners refuse any project/URL other than `aure-relics-v09-foundation` at `http://127.0.0.1:56321`. Local admin credentials are read in memory only for creating/cleaning test identities, never embedded in browser code. Aure ports remain 56320–56329; no other project's stack is touched.
 
-## Manual browser acceptance — still required
+## Browser acceptance — passed with Playwright
 
-The in-app browser provider returned an empty browser list. **No browser or visual verification is claimed.** jsdom and real HTTP/Auth tests do not establish visual layout or actual multi-browser interaction.
+The desktop built-in browser integration remained unavailable. At Patrick's request,
+standalone Playwright Chromium completed the acceptance gate instead. The following
+items passed in both desktop and narrow viewports:
+
+| Acceptance area | Result |
+| --- | --- |
+| DM register/login/logout, campaign creation/selection, session hosting | PASS |
+| Code/link rendering and real clipboard copying | PASS |
+| Anonymous identity, fragment removal, pending request, DM approval, lobby/roster | PASS |
+| Second guest rejection; approved guest removal; roster access withdrawn | PASS |
+| Guest direct `#dm`, `#campaign`, `#session`, `#board` route denial | PASS |
+| DM B denied DM A campaign/session/roster and review RPC | PASS |
+| Old rotated code, revoked code, valid alternate campaign/session scope denied | PASS |
+| Guest never initializes legacy board, including after approval/reload | PASS |
+| Board grid, terrain placement, combat initiative/turn, scene save/load, return | PASS |
+| Local branding/images/fonts, keyboard focus, loading/error states, entry width | PASS |
+| Unexpected browser console errors, uncaught errors, failed/network requests | None |
+
+Screenshots were inspected for desktop and narrow layouts. Two reproduced layout
+defects were fixed in `src/entry/entry.css`: the return button overlapped header
+branding, and the fixed notes dock covered the final narrow-layout tracker controls.
+The latter was also reproduced against merged main's offline board. The fix reserves
+space in the Vite board wrapper only; legacy gameplay and `style.css` are unchanged.
+Regression tests failed before the fixes and passed afterward. Full E2E, DB/API/JS,
+build and audit verification then passed. No schema/auth/RLS change was needed.
+
+Expected HTTP failures were explicitly asserted: invalid login 400, unauthorized
+DM record lookup 406, and invalid/revoked/cross-scope invitation or review 403.
+No remote font/CDN request occurred. Fixture cleanup reported no errors.
+
+See [Playwright setup and hygiene](../../tests/e2e/README.md) for commands, test
+isolation, local-only guards and failure artifacts. Run `npm.cmd run test:e2e` to
+repeat the acceptance gate. Native mobile browsers, hosted email confirmation and
+production deployment settings are not covered by the local Chromium run.
+
+### Optional manual deployment smoke
 
 1. Set ignored `.env.local` using `.env.example`, with local API URL and only the local publishable/anon key. Run `npm.cmd run dev` (or build and preview). Use a normal browser profile for DM A and an incognito/separate profile for a guest.
 2. Register a DM. With email confirmation enabled, confirm the email and return to sign in. Log out and back in. Verify branded layout, keyboard focus, mobile width, error states and no remote font/CDN calls.
@@ -80,4 +116,5 @@ The in-app browser provider returned an empty browser list. **No browser or visu
 - Approval polling is approximately five seconds, not realtime. Guests never enter the legacy board. Full player battle UI, character creation/reclaim and synchronized play remain later issues.
 - npm emits the existing unapproved `esbuild@0.25.12` install-script warning; it is non-blocking and production builds pass. Windows sandbox initially blocked esbuild filesystem access; the build succeeds with normal filesystem access. An initial top-level-await build error was fixed without raising Vite's browser target.
 
-Issue #6 is ready for code review; manual browser/visual acceptance remains an explicit review gate before merge.
+Issue #6's local browser acceptance gate is complete. PR #17 is ready for merge
+review, with hosted deployment setup still required. Do not merge automatically.

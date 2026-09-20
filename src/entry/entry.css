@@ -52,7 +52,14 @@ body.entry-active { overflow: auto; min-height: 100dvh; }
 .entry-loading { padding: 80px 0; text-align: center; }
 .entry-footer { border-top: 1px solid #4c3b2255; margin-top: 48px; padding-top: 24px; text-align: center; font-size: 13px; color: #b09b78; }
 .entry-footer span { padding: 0 12px; color: #8e6e3c; }
-.entry-board-back { position: absolute; right: 14px; bottom: 8px; z-index: 5; padding: 6px 10px; background: #100d09; cursor: pointer; }
+.entry-board-back { position: absolute; right: max(100px, 7vw); bottom: 8px; z-index: 5; padding: 6px 10px; background: #100d09; cursor: pointer; }
+@media (max-width: 900px) {
+  /* Keep the online return action off the original banner and symbol row. */
+  .entry-board-back { position: static; grid-column: 1 / -1; justify-self: end; }
+  /* The fixed notes dock must not cover the last controls in the stacked board. */
+  body:not(.entry-active) #legacyBoard { padding-bottom: 58px; }
+  body.dm-workspace-open:not(.entry-active) #legacyBoard { padding-bottom: 210px; }
+}
 @media (max-width: 800px) {
   .entry-wrap { padding: 0 20px 24px; }
   .entry-welcome, .entry-columns { grid-template-columns: 1fr; gap: 24px; }

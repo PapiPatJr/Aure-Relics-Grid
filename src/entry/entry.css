@@ -1,0 +1,74 @@
+/* Scoped online entry surfaces; legacy board styles remain in style.css. */
+[hidden] { display: none !important; }
+body.entry-active { overflow: auto; min-height: 100dvh; }
+.entry-active .app-header { position: relative; }
+#onlineEntry { min-height: calc(100dvh - var(--header-height)); color: #e8dcc2; }
+.entry-wrap { width: min(1160px, 100%); margin: auto; padding: 0 40px 28px; }
+.entry-nav { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 22px 0; border-bottom: 1px solid #594328; }
+.entry-nav > div, .entry-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.entry-wordmark, .entry-eyebrow { font: 600 11px/1.5 "Cinzel", serif; letter-spacing: 2.3px; color: #c9a95c; }
+#onlineEntry h1, #onlineEntry h2, #onlineEntry h3 { font-family: "Cinzel", serif; color: #f1deae; overflow-wrap: anywhere; }
+#onlineEntry h1 { margin: 12px 0 18px; font-size: clamp(28px, 4vw, 48px); font-weight: 600; line-height: 1.18; }
+#onlineEntry h1:focus { outline: none; }
+#onlineEntry h2 { margin: 8px 0 18px; font-size: 23px; font-weight: 600; }
+#onlineEntry h3 { font-size: 16px; margin: 0 0 5px; }
+#onlineEntry p { line-height: 1.65; }
+.entry-heading { max-width: 740px; margin: 42px 0 32px; }
+.entry-heading > p:last-child { font-size: 18px; color: #c4b69c; }
+.entry-welcome { display: grid; grid-template-columns: 1.1fr 1fr; gap: 76px; align-items: center; padding: 38px 0; }
+.entry-welcome .entry-heading { margin-top: 0; }
+.entry-welcome h1 { max-width: 470px; }
+.entry-intro { color: #ae9b79; font-size: 18px; font-style: italic; }
+.entry-flourish { color: #92723d; letter-spacing: 4px; margin: 36px 0; }
+.entry-panel { padding: 28px; border: 1px solid #584226; border-radius: 12px; background: linear-gradient(140deg, #211b13f5, #100e0bf5); box-shadow: 0 18px 45px #0003; min-width: 0; }
+.entry-accent { border-top: 2px solid #b48b45; }
+.entry-columns { display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; align-items: start; }
+.entry-lobby { max-width: 700px; margin: 0 auto 32px; }
+#onlineEntry form { display: grid; gap: 10px; }
+#onlineEntry label { display: block; font-weight: 600; font-size: 15px; margin-top: 8px; }
+#onlineEntry input { width: 100%; min-height: 46px; padding: 10px 12px; background: #090807; border: 1px solid #6c5738; border-radius: 6px; color: #f1e8d6; font-size: 16px; }
+#onlineEntry button { min-height: 40px; padding: 9px 15px; border: 1px solid #715734; background: #211a12; border-radius: 6px; color: #efdbb0; cursor: pointer; font-weight: 600; line-height: 1.35; transition: background .15s, border-color .15s; }
+#onlineEntry button:hover { background: #352719; border-color: #c6a05c; }
+#onlineEntry .entry-primary { color: #211509; background: linear-gradient(120deg, #eed394, #bd9149); border-color: #d8b16a; }
+#onlineEntry .entry-primary:hover { background: #f0d89f; }
+#onlineEntry form button[type=submit] { margin-top: 14px; min-height: 46px; }
+#onlineEntry :is(button, input):focus-visible, .entry-board-back:focus-visible { outline: 2px solid #f5d98b; outline-offset: 4px; }
+#onlineEntry :disabled { opacity: .65; cursor: wait; }
+.entry-muted, #onlineEntry .entry-row p { color: #b8aa90; font-size: 14px; }
+.entry-empty { padding: 22px 0; color: #bbaa8b; font-style: italic; }
+.entry-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 0; border-bottom: 1px solid #4e3d2866; overflow-wrap: anywhere; }
+.entry-row > div { min-width: 0; }
+.entry-row p { margin: 0; }
+.entry-badge { display: inline-block; font-size: 12px; color: #ddc68e; border: 1px solid #675334; border-radius: 20px; padding: 3px 10px; text-transform: capitalize; }
+.entry-section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+#onlineEntry hr { border: 0; border-top: 1px solid #57422a; margin: 26px 0; }
+#onlineEntry details { margin-top: 20px; background: transparent; border: 0; }
+#onlineEntry summary { color: #ae9b79; cursor: pointer; }
+#roster > h3 { margin-top: 24px; }
+#sharePanel:not(:empty) { padding-top: 18px; }
+#sharePanel .entry-actions { margin-top: 12px; }
+#entryNotice { min-height: 32px; padding-top: 12px; font-size: 15px; color: #d1bb8e; }
+#entryNotice.entry-error { color: #ffb7a2; }
+.entry-loading { padding: 80px 0; text-align: center; }
+.entry-footer { border-top: 1px solid #4c3b2255; margin-top: 48px; padding-top: 24px; text-align: center; font-size: 13px; color: #b09b78; }
+.entry-footer span { padding: 0 12px; color: #8e6e3c; }
+.entry-board-back { position: absolute; right: max(100px, 7vw); bottom: 8px; z-index: 5; padding: 6px 10px; background: #100d09; cursor: pointer; }
+@media (max-width: 900px) {
+  /* Keep the online return action off the original banner and symbol row. */
+  .entry-board-back { position: static; grid-column: 1 / -1; justify-self: end; }
+  /* The fixed notes dock must not cover the last controls in the stacked board. */
+  body:not(.entry-active) #legacyBoard { padding-bottom: 58px; }
+  body.dm-workspace-open:not(.entry-active) #legacyBoard { padding-bottom: 210px; }
+}
+@media (max-width: 800px) {
+  .entry-wrap { padding: 0 20px 24px; }
+  .entry-welcome, .entry-columns { grid-template-columns: 1fr; gap: 24px; }
+  .entry-welcome { padding-top: 24px; }
+  .entry-flourish, .entry-intro { display: none; }
+  .entry-heading { margin: 24px 0; }
+  .entry-panel { padding: 22px; }
+  .entry-nav { gap: 10px; flex-wrap: wrap; }
+  .entry-wordmark { font-size: 10px; }
+  .entry-row { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) { #onlineEntry button { transition: none; } }

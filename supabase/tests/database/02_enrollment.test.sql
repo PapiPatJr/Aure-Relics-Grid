@@ -1,0 +1,104 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+set search_path=public,extensions;
+select no_plan();
+insert into auth.users(id,is_anonymous) values
+('00000000-0000-0000-0000-000000000001',false),
+('00000000-0000-0000-0000-000000000002',false),
+('00000000-0000-0000-0000-000000000003',true),
+('00000000-0000-0000-0000-000000000004',true);
+insert into campaigns(id,owner_id,name) values
+('10000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001','A'),
+('10000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000002','B');
+insert into sessions(id,campaign_id,name) values
+('40000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','A1'),
+('40000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001','A2'),
+('40000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000002','B1');
+set local role authenticated;
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
+select set_config('test.code',issue_session_code('40000000-0000-0000-0000-000000000001'),true);
+select ok(current_setting('test.code') ~ '^[0-9a-f]{64}$','256-bit session code');
+select set_config('test.code2',issue_session_code('40000000-0000-0000-0000-000000000002'),true);
+select throws_ok($$select issue_session_code('40000000-0000-0000-0000-000000000003')$$,'42501',null,'foreign DM cannot issue code');
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000003","role":"authenticated","is_anonymous":false}',true);
+select is(get_guest_lobby('40000000-0000-0000-0000-000000000001'),null::jsonb,'no request gives null');
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','wrong','Guest')$$,'42501',null,'invalid code denied');
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000002','40000000-0000-0000-0000-000000000001',current_setting('test.code'),'Guest')$$,'42501',null,'cross campaign denied');
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000002',current_setting('test.code'),'Guest')$$,'42501',null,'cross session denied');
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.code'),'   ')$$,'22023',null,'empty display name denied');
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.code'),repeat('x',81))$$,'22023',null,'long display name denied');
+reset role;
+select is((select count(*)::int from campaign_members),0,'invalid requests create no membership');
+select is((select count(*)::int from session_players),0,'invalid requests create no session player');
+select ok((select code_hash=extensions.digest(current_setting('test.code'),'sha256') from private.session_codes where session_id='40000000-0000-0000-0000-000000000001'),'only hash stored');
+select ok((select expires_at=now()+interval '24 hours' from private.session_codes where session_id='40000000-0000-0000-0000-000000000001'),'code expires after 24 hours');
+set local role authenticated;
+select lives_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.code'),'  Guest  ')$$,'anonymous auth requests pending despite forged JWT flag');
+select is(get_guest_lobby('40000000-0000-0000-0000-000000000001'), '{"status":"pending","campaign_name":"A","session_name":"A1","display_name":"Guest"}'::jsonb,'minimal own lobby');
+select is((select count(*)::int from get_session_roster('40000000-0000-0000-0000-000000000001')),0,'pending guest cannot see roster');
+select is((select count(*)::int from sessions),0,'pending has no session access');
+select throws_ok($$select review_session_guest('40000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000003','approve')$$,'42501',null,'self approval denied');
+select throws_ok($$select issue_session_code('40000000-0000-0000-0000-000000000001')$$,'42501',null,'guest cannot issue');
+select throws_ok($$select revoke_session_code('40000000-0000-0000-0000-000000000001')$$,'42501',null,'guest cannot revoke');
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000002","role":"authenticated"}',true);
+select throws_ok($$select review_session_guest('40000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000003','approve')$$,'42501',null,'other DM cannot approve');
+select is((select count(*)::int from get_session_roster('40000000-0000-0000-0000-000000000001')),0,'other DM cannot see roster');
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated","is_anonymous":true}',true);
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.code'),'DM')$$,'42501',null,'permanent identity cannot join by spoofing claim');
+select is((select status from get_session_roster('40000000-0000-0000-0000-000000000001')),'pending','failed approvals leave request pending');
+select lives_ok($$select review_session_guest('40000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000003','approve')$$,'owner approves');
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000003","role":"authenticated"}',true);
+select is(get_guest_lobby('40000000-0000-0000-0000-000000000001')->>'status','approved','approval effective');
+select lives_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.code'),'Guest')$$,'repeat request allowed');
+select is(get_guest_lobby('40000000-0000-0000-0000-000000000001')->>'status','approved','repeat preserves approved');
+select lives_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000002',current_setting('test.code2'),'Guest')$$,'approved member requests another session');
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000004","role":"authenticated"}',true);
+select lives_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.code'),'Second')$$,'second pending guest');
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000003","role":"authenticated"}',true);
+select is((select count(*)::int from get_session_roster('40000000-0000-0000-0000-000000000001')),1,'approved roster hides pending guests');
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
+select is((select count(*)::int from get_session_roster('40000000-0000-0000-0000-000000000001')),2,'owner sees all requests');
+select lives_ok($$select review_session_guest('40000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003','reject')$$,'reject second session');
+select lives_ok($$select review_session_guest('40000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000004','reject')$$,'reject pending guest');
+select set_config('test.rotated',issue_session_code('40000000-0000-0000-0000-000000000001'),true);
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000003","role":"authenticated"}',true);
+select is(get_guest_lobby('40000000-0000-0000-0000-000000000001')->>'status','approved','rejection elsewhere preserves approved access');
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.code'),'Guest')$$,'42501',null,'rotated code denied');
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000002',current_setting('test.code2'),'Guest')$$,'42501',null,'rejected session cannot self rejoin');
+reset role;
+update private.session_codes set expires_at=now()-interval '1 second' where session_id='40000000-0000-0000-0000-000000000001';
+set local role authenticated;
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.rotated'),'Guest')$$,'42501',null,'expired code denied');
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
+select set_config('test.rotated',issue_session_code('40000000-0000-0000-0000-000000000001'),true);
+select revoke_session_code('40000000-0000-0000-0000-000000000001');
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000003","role":"authenticated"}',true);
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.rotated'),'Guest')$$,'42501',null,'revoked code denied');
+select is(get_guest_lobby('40000000-0000-0000-0000-000000000001')->>'status','approved','code revocation does not revoke current access');
+reset role;
+update campaign_members set status='revoked' where user_id='00000000-0000-0000-0000-000000000003';
+set local role authenticated;
+select is(get_guest_lobby('40000000-0000-0000-0000-000000000001')->>'status','revoked','campaign revocation overrides session');
+select is((select count(*)::int from get_session_roster('40000000-0000-0000-0000-000000000001')),0,'revoked member sees no roster');
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
+select throws_ok($$select review_session_guest('40000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000003','approve')$$,'42501',null,'review cannot restore revoked membership');
+select set_config('test.valid',issue_session_code('40000000-0000-0000-0000-000000000001'),true);
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000003","role":"authenticated"}',true);
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.valid'),'Guest')$$,'42501',null,'valid code cannot restore revoked membership');
+reset role;
+select is((select status from campaign_members where user_id='00000000-0000-0000-0000-000000000003'),'revoked','denied join leaves campaign revocation unchanged');
+update sessions set status='closed' where id='40000000-0000-0000-0000-000000000001';
+set local role authenticated;
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
+select throws_ok($$select issue_session_code('40000000-0000-0000-0000-000000000001')$$,'42501',null,'closed session cannot issue code');
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000003","role":"authenticated"}',true);
+select is(get_guest_lobby('40000000-0000-0000-0000-000000000001')->>'status','closed','closed lobby status');
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.valid'),'Guest')$$,'42501',null,'closed session denies valid code');
+reset role;
+select ok(not exists(select 1 from private.activity_feed where details::text like '%'||current_setting('test.code')||'%'),'events contain no plaintext code');
+set local role anon;
+select throws_ok($$select get_guest_lobby('40000000-0000-0000-0000-000000000001')$$,'42501',null,'bare anon cannot lobby');
+select throws_ok($$select request_session_join('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001',current_setting('test.code'),'Guest')$$,'42501',null,'bare anon cannot join');
+reset role;
+select * from finish();
+rollback;

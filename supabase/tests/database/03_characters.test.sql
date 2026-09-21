@@ -60,5 +60,19 @@ select ok(not exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pron
 select ok(not exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='private'
   and p.proname in ('create_session_character','update_session_character','review_character','assign_character','get_character_panel','set_character_image')
   and not coalesce(p.proconfig @> array['search_path=""'],false)),'privileged helpers have empty search paths');
+-- Recovery must replace the target's assignment even in a different, closed session.
+set local role authenticated;
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
+update sessions set status='closed' where id='40000000-0000-0000-0000-000000000001';
+insert into sessions(id,campaign_id,name) values('40000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001','Recovery session');
+insert into session_players(campaign_id,session_id,user_id,status) values('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000002','approved');
+insert into characters(id,campaign_id,name,approved) values('50000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001','Recovered hero',true);
+select assign_character('40000000-0000-0000-0000-000000000002','50000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000002');
+select is((select count(*)::int from session_players where user_id='00000000-0000-0000-0000-000000000002' and character_id is not null),1,'cross-session recovery leaves one target assignment');
+select is((select count(*)::int from characters where id=current_setting('test.character')::uuid),1,'recovery preserves previous character record');
+select set_config('test.recovered_code',issue_character_code('50000000-0000-0000-0000-000000000002'),true);
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000002","role":"authenticated"}',true);
+select lives_ok($$select reclaim_character('40000000-0000-0000-0000-000000000002','50000000-0000-0000-0000-000000000002',current_setting('test.recovered_code'))$$,'fresh recovery code works despite previous closed-session assignment');
+reset role;
 select * from finish();
 rollback;

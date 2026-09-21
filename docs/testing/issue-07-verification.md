@@ -80,6 +80,24 @@ browser report or environment files. Legacy `script.js`, `style.css`, `index.htm
 dependencies and Supabase port configuration are unchanged. Independent reviewers
 rechecked the lifecycle and storage fixes with no outstanding findings.
 
+## Final PR review
+
+The final review found a cross-session recovery defect: assigning a replacement
+character in a later session left the target player's earlier character assignment
+in a closed session. A fresh reclaim code then failed the campaign-wide conflict
+check. Recovery now clears both the selected character's previous controllers and
+the target player's earlier campaign assignments atomically, preserving all character
+records. The new regression first failed with two assignments and SQLSTATE 42501,
+then passed after the fix. Database coverage is now 162 assertions (131 existing,
+31 character). All 156 real API/Auth/Storage checks passed again after a clean reset.
+
+The original browser rerun passed 7/8 tests; the narrow enrollment scenario hit
+Chromium ERR_NO_BUFFER_SPACE while loading the local logo. No assertion or browser
+error allowance was relaxed. The final full browser rerun passed all 8 tests / 24 isolated contexts in 2.0 minutes.
+SQL lint and security advisors found no issues, and dependency audit reported zero
+vulnerabilities. Full-diff review found no Issue #8 implementation or changes to the
+legacy board. Registered participation remains independent of campaign management.
+
 ## Deployment and limitations
 
 - No hosted project changed. Apply the migration and existing Auth/API/environment setup

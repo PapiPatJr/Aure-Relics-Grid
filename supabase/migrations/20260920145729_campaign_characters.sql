@@ -114,7 +114,9 @@ begin
   if not found then raise exception 'Character unavailable' using errcode='42501'; end if;
   perform 1 from public.session_players where session_id=p_session and user_id=p_user and status='approved' for update;
   if not found then raise exception 'Player unavailable' using errcode='42501'; end if;
-  update public.session_players set character_id=null where campaign_id=campaign and character_id=p_character;
+  -- Recovery replaces the target's campaign assignment, including closed sessions.
+  update public.session_players set character_id=null where campaign_id=campaign
+    and (character_id=p_character or user_id=p_user);
   update public.session_players set character_id=p_character where session_id=p_session and user_id=p_user;
   update private.character_codes set revoked_at=clock_timestamp() where character_id=p_character;
   insert into private.activity_feed(campaign_id,session_id,actor_id,event_type,details)

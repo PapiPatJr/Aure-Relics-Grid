@@ -206,3 +206,45 @@ gate now passes with Playwright's isolated DM/guest contexts; see `tests/e2e/REA
 The UI uses anonymous Auth but does not yet supply CAPTCHA tokens;
 do not enable mandatory CAPTCHA before integrating its client flow. Configure abuse
 controls before a public rollout. No hosted Auth settings were changed automatically.
+
+## Issue #7 campaign characters and portraits
+
+The character migration extends `public.characters` with `public_notes`, `image_path`,
+`created_at` and `updated_at`. It adds six authenticated RPCs: `create_session_character`,
+`update_session_character`, `review_character`, `assign_character`, `get_character_panel`
+and `set_character_image`. Existing issue/revoke/reclaim code RPC signatures remain.
+Only campaign owners manage approval, codes and recovery under the current permission
+helper. New participant operations work for either anonymous or registered approved
+session members; owning a different campaign grants no authority here. Account identity
+is not a permanent DM/player role. Authorized-DM/session-seat handoff remains deferred.
+
+Guest creation assigns a pending character; owner approval is separate from session
+approval. Updates expose only bounded shared fields. The panel includes no private notes,
+code hashes or plaintext secrets. Code issuance returns 32 random bytes as 64 hex digits;
+the database stores SHA-256 only, with 30-day expiry. The UI wraps the secret as
+`campaign.character.secret`, shows it intentionally in memory, and clears it on navigation.
+Reclaim requires effective campaign/session approval and exact campaign/character scope.
+A valid bearer code transfers control, so share it privately. Rotation invalidates earlier
+codes; revocation, withdrawn character approval and owner recovery invalidate the code.
+An existing different character assignment blocks reclaim; owner recovery is the override.
+
+The existing private `character-images` bucket also accepts the stable canonical path
+`campaignUUID/characterUUID/portrait.png`. PNG, JPEG or WebP, at most 5 MiB; the fixed
+filename does not override the file's MIME type. Participants upload once for their own
+assigned character, including pending submissions. Once linked, only the owner can replace
+the image, even if its object has been deleted. Owner restoration uses upload; normal UI
+replacement uses update. Legacy four-part paths retain their earlier policies.
+Owners, current assigned participants and existing approved party projections may read;
+revoked/closed access cannot. UI downloads are authenticated with caching disabled, use
+revocable object URLs, and never publish signed/public URLs. Access polling clears the
+panel on denial; previously downloaded data cannot be remotely erased from a recipient.
+
+Upload and pointer linking are separate API calls. If upload succeeds but linking fails,
+use **Retry linking uploaded portrait**. If creation succeeds but its optional upload
+fails, the character remains saved and the portrait can be retried from its card.
+No new hosted dashboard SQL, bucket creation or environment variables are required.
+Apply committed migrations through the existing hosted setup process; public deployment
+Auth/abuse controls and settings still need Patrick's setup. Realtime remains unpublished.
+
+`npm.cmd run test:api` includes the character suite; `npm.cmd run test:characters-api`
+runs it alone. See [Issue #7 verification](../docs/testing/issue-07-verification.md).

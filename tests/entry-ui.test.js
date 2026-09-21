@@ -132,3 +132,9 @@ test('guest refresh failure clears previously approved lobby and roster', async 
   assert.match(document.querySelector('#lobbyState').textContent, /Unable to verify/);
   assert.equal(document.querySelector('#roster').textContent, '');
 });
+test('registered participant may use an approved player lobby without initializing a board', async t => {
+  const app = fixture(t, `#lobby/${session}`, dm); app.status('approved'); await settle();
+  assert.match(document.querySelector('#lobbyState')?.textContent || '', /Welcome to the party/);
+  assert.equal(app.boots(), 0);
+  assert.ok(app.calls.some(c => c.name === 'get_character_panel'));
+});

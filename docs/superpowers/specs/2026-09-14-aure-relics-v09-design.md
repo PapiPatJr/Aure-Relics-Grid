@@ -22,6 +22,10 @@ v0.9 is not full v1.0 polish. It is the feature-complete candidate for final tes
 
 ## 3. User Roles
 
+**Locked update, 2026-09-20:** There is one Aure Relics account identity. A registered user may be a DM in one campaign, a player in another, or both. Account identity, campaign ownership, campaign role, current session authority, character assignment and view mode are separate concepts. References below to a DM account mean an authenticated account acting with the required campaign permissions, not a permanent account type.
+
+Campaign Owner retains ultimate authority. Campaigns may have Authorized DMs; each session has a Current Session DM. Future handoff is between Authorized DMs, and the owner can always reclaim the DM seat. Anonymous guests may play but never receive DM privileges. DM View / Player View is presentation only and cannot grant backend permissions. Issue #7 preserves the existing owner-only management implementation; Authorized DM and session-seat transfer implementation remains deferred.
+
 ### DM
 
 The DM has an account and owns campaigns, sessions, maps, hidden data, fog, terrain, hazards, traps, enemies, initiative, and player approvals.
@@ -30,9 +34,9 @@ The DM has an account and owns campaigns, sessions, maps, hidden data, fog, terr
 
 Players do not need accounts in v0.9. They join by campaign/session code or link, create/reclaim a campaign-saved character, and use their own screen during play.
 
-### Future Registered Player
+### Registered Player
 
-After v1.x, player registration can become optional. Registered players may save up to four characters and four character image imports for reuse.
+An authenticated account may participate as a player where approved. Registration remains optional for v0.9 guest play. Character portability and account-wide reuse limits are future product work, not restrictions on campaign roles or requirements for guest characters.
 
 ## 4. Authentication and Access
 

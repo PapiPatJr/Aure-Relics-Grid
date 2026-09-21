@@ -1,4 +1,5 @@
 import { createEntryService, formatJoinCode, joinLink, isDm } from './service.js';
+import { mountCharacters } from '../characters/panel.js';
 
 export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const e = escapeHtml;
@@ -15,6 +16,8 @@ export function startEntry(client, bootBoard) {
   let user = null, route = '', epoch = 0, timer, busy = false, authAction = false;
   let capturedCode = '', activeCampaign = null, activeSession = null, issuedCode = '';
   let boardStarted = false, destroyed = false;
+  let characterPanel = null;
+  const clearCharacters = () => { characterPanel?.dispose(); characterPanel = null; };
   const back = document.createElement('button');
   back.type = 'button'; back.className = 'entry-board-back'; back.textContent = 'Return to session'; back.hidden = true;
   document.querySelector('.app-header').append(back);
@@ -67,6 +70,7 @@ export function startEntry(client, bootBoard) {
   }
   async function load() {
     const stamp = ++epoch;
+    clearCharacters();
     clearTimeout(timer); concealBoard(); issuedCode = '';
     shell('<p class="entry-loading">Opening the campaign hall…</p>');
     try {
@@ -110,7 +114,7 @@ export function startEntry(client, bootBoard) {
         shell(title(campaign.name, session.name, 'Invite your party and welcome each player before they enter the lobby.') + `<div class="entry-columns"><section class="entry-panel entry-accent"><p class="entry-eyebrow">INVITE YOUR PARTY</p><h2>A seat at the table</h2><p>Join codes expire after 24 hours. Each guest still needs your approval.</p>${session.status === 'closed' ? '<p>This session is closed.</p>' : `<div class="entry-actions">${button('issue', 'Generate / replace code', '', 'entry-primary')}${button('revoke-code', 'Revoke join code')}</div><div id="sharePanel"></div><p class="entry-muted">Replacing or revoking a code stops new requests. Remove a player below to withdraw their existing access.</p>`}<hr><h2>Your battle board</h2><p>The existing board saves scenes on this device. It is not linked to this online session yet.</p>${button('board', 'Open local battle board', session.id)}</section><section class="entry-panel"><div class="entry-section-head"><h2>Your players</h2>${button('refresh', 'Refresh')}</div><p class="entry-muted">Requests update automatically while this panel is open.</p><div id="roster" aria-live="polite"></div></section></div>`);
         await refresh(stamp); return;
       }
-      if (page === 'lobby' && user?.is_anonymous) {
+      if (page === 'lobby' && user) {
         activeSession = { id };
         shell(title('PLAYER LOBBY', 'Your place in the story', 'Keep this browser open while your DM welcomes the party.') + '<section class="entry-panel entry-lobby"><div id="lobbyState" aria-live="polite"></div><div id="roster"></div><div class="entry-actions">' + button('refresh', 'Check status') + button('join', 'Use another code') + '</div></section>');
         await refresh(stamp); return;
@@ -157,9 +161,20 @@ export function startEntry(client, bootBoard) {
         const state = states[lobby?.status] || ['No request found', 'Use the join link or code your DM shared to request a seat.'];
         root.querySelector('#lobbyState').innerHTML = `<span class="entry-badge">${e(lobby?.status || 'not joined')}</span><h2>${e(state[0])}</h2><p>${e(state[1])}</p>${lobby ? `<p>${e(lobby.campaign_name)} · ${e(lobby.session_name)}</p>` : ''}`;
       }
+      if (host || lobby?.status === 'approved') {
+        if (!characterPanel) {
+          let panelRoot = root.querySelector('#characters');
+          if (!panelRoot) {
+            panelRoot = document.createElement('div'); panelRoot.id = 'characters';
+            root.querySelector('.entry-footer').before(panelRoot);
+          }
+          characterPanel = mountCharacters(panelRoot, client, { session, host, displayName: lobby?.display_name || '' });
+        } else await characterPanel.refresh();
+      } else clearCharacters();
       notice('Up to date.');
     } catch {
       if (stamp === epoch) {
+        clearCharacters();
         // Fail closed: do not leave an approved lobby displayed on a failed recheck.
         if (route.startsWith('lobby/')) {
           root.querySelector('#roster').replaceChildren();
@@ -222,13 +237,14 @@ export function startEntry(client, bootBoard) {
     if ((session?.user?.id ?? null) !== (user?.id ?? null)) {
       // Callback must return before another Auth operation is started.
       ++epoch; concealBoard(); root.replaceChildren();
+      clearCharacters();
       setTimeout(() => { if (!destroyed) void load(); }, 0);
     }
   }).data.subscription;
   const hashChanged = () => { void load(); };
   window.addEventListener('hashchange', hashChanged);
-  window.addEventListener('pagehide', () => { clearTimeout(timer); });
+  window.addEventListener('pagehide', () => { clearTimeout(timer); clearCharacters(); });
   window.addEventListener('pageshow', event => { if (event.persisted) void load(); });
   void load();
-  return () => { destroyed = true; ++epoch; clearTimeout(timer); subscription.unsubscribe(); window.removeEventListener('hashchange', hashChanged); back.remove(); };
+  return () => { destroyed = true; ++epoch; clearCharacters(); clearTimeout(timer); subscription.unsubscribe(); window.removeEventListener('hashchange', hashChanged); back.remove(); };
 }

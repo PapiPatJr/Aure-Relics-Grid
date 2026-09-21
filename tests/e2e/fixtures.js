@@ -11,6 +11,7 @@ export const test = base.extend({
     const actors = [], users = new Set(), campaigns = new Map(), pending = [];
     const problems = [], expectedDenials = [], assets = new Set();
     const credentials = new Map();
+    const uploadedPortraits = new Set();
     let closing = false;
     const harness = {
       async actor(label) {
@@ -50,6 +51,9 @@ export const test = base.extend({
               } else problems.push(`${label}: unexpected HTTP ${response.status()} ${path}`);
             }
             if (/\.(png|ttf|webp)(\?|$)/.test(path) && response.ok()) assets.add(path);
+            if (url.origin === apiOrigin && response.ok() && ['POST', 'PUT'].includes(response.request().method()) && path.startsWith('/storage/v1/object/character-images/')) {
+              uploadedPortraits.add(decodeURIComponent(path.slice('/storage/v1/object/character-images/'.length)));
+            }
             if (url.origin !== apiOrigin || !response.ok() || response.request().method() !== 'POST') return;
             if (path === '/auth/v1/signup') {
               const body = await response.json();
@@ -117,7 +121,7 @@ export const test = base.extend({
       },
       async screenshot(actor, name) {
         const path = testInfo.outputPath(`${name}.png`);
-        await actor.page.screenshot({ path, fullPage: true, mask: [actor.page.locator('#shareCode'), actor.page.locator('#shareLink'), actor.page.locator('#password')] });
+        await actor.page.screenshot({ path, fullPage: true, mask: [actor.page.locator('#shareCode'), actor.page.locator('#shareLink'), actor.page.locator('#password'), actor.page.locator('[data-character-secret]')] });
         await testInfo.attach(name, { path, contentType: 'image/png' });
       },
       async rpc(actor, method, args) {
@@ -145,6 +149,10 @@ export const test = base.extend({
       }
       const ownerClients = new Map();
       try {
+        if (uploadedPortraits.size) {
+          const removed = await admin.storage.from('character-images').remove([...uploadedPortraits]);
+          if (removed.error) cleanupErrors.push(removed.error.message);
+        }
         for (const [campaign, owner] of campaigns) {
           try {
             if (!ownerClients.has(owner)) {

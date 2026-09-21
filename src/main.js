@@ -2,6 +2,7 @@ import { bootLegacyPrototype } from './app/legacyBootstrap.js';
 import { getSupabaseClient } from './supabase/client.js';
 import { startEntry } from './entry/app.js';
 import './entry/entry.css';
+import './characters/characters.css';
 
 async function start() {
   try {

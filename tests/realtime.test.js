@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createSyncEngine, isRevisionConflict } from '../src/realtime/engine.js';
+import { createSyncEngine, isRevisionConflict, isAccessDeniedError } from '../src/realtime/engine.js';
 import { createFakeAdapter } from '../src/realtime/fakeAdapter.js';
 import { SyncStatus } from '../src/realtime/types.js';
 
@@ -248,6 +248,77 @@ test('access denial clears both revision watermarks, stops exposing stale state 
   // mutation to. The backend was never asked and never gets to say no here — there's nothing to send.
   await assert.rejects(() => engine.mutate(session, { type: 'session.setRound', payload: { roundNumber: 2 } }), /No authoritative snapshot/);
   assert.equal(adapter.calls.mutate.length, 0);
+});
+
+test('a hydrate() rejection carrying SQLSTATE 42501 maps to denied, not error', async () => {
+  const adapter = createFakeAdapter();
+  adapter.setHydrateResult(async () => { throw Object.assign(new Error('not authorized'), { code: '42501' }); });
+  const engine = createSyncEngine(adapter);
+  const t = tracker();
+  engine.subscribe(session, t.handlers);
+  await assert.rejects(() => engine.hydrate(session));
+  assert.equal(engine.getStatus(), SyncStatus.DENIED);
+  assert.ok(t.statuses.some(s => (Array.isArray(s) ? s[0] : s) === SyncStatus.DENIED));
+  assert.equal(isAccessDeniedError({ code: '42501' }), true);
+});
+
+test('malformed, network and generic server hydrate failures still map to error, never denied', async () => {
+  for (const error of [
+    new Error('ECONNRESET'),
+    Object.assign(new Error('malformed command'), { code: '22023' }),
+    Object.assign(new Error('internal server error'), { code: '500' }),
+    { message: 'no code at all' },
+  ]) {
+    const adapter = createFakeAdapter();
+    adapter.setHydrateResult(async () => { throw error; });
+    const engine = createSyncEngine(adapter);
+    await assert.rejects(() => engine.hydrate(session));
+    assert.equal(engine.getStatus(), SyncStatus.ERROR);
+    assert.equal(isAccessDeniedError(error), false);
+  }
+});
+
+test('denied (from either trigger) tears down the live subscription immediately — no denied socket waits for an invalidation', async () => {
+  // Trigger 1: an adapter-pushed denied status.
+  {
+    const adapter = createFakeAdapter();
+    adapter.setHydrateResult(async () => snap('1'));
+    const engine = createSyncEngine(adapter);
+    engine.subscribe(session, {});
+    await flush();
+    assert.equal(adapter.isSubscribed(session), true);
+    adapter.emitStatus(session, SyncStatus.DENIED, { reason: 'revoked' });
+    assert.equal(adapter.isSubscribed(session), false);
+  }
+  // Trigger 2: a hydrate() rejection carrying 42501 while a live subscription is active.
+  {
+    const adapter = createFakeAdapter();
+    adapter.setHydrateResult(async () => snap('1'));
+    const engine = createSyncEngine(adapter);
+    engine.subscribe(session, {});
+    await flush();
+    assert.equal(adapter.isSubscribed(session), true);
+    adapter.setHydrateResult(async () => { throw Object.assign(new Error('not authorized'), { code: '42501' }); });
+    await assert.rejects(() => engine.hydrate(session));
+    assert.equal(adapter.isSubscribed(session), false);
+  }
+});
+
+test('denied never lets an already-scheduled follow-up hydrate slip through afterward', async () => {
+  const adapter = createFakeAdapter();
+  const gate = deferred();
+  adapter.setHydrateResult(() => gate.promise);
+  const engine = createSyncEngine(adapter);
+  const t = tracker();
+  engine.subscribe(session, t.handlers); // bootstrap hydrate begins, awaiting `gate`
+  await flush();
+  adapter.emitInvalidation(session, '2'); // coalesces onto the in-flight hydrate; schedules a follow-up
+  assert.equal(adapter.calls.hydrate.length, 1);
+  gate.reject(Object.assign(new Error('not authorized'), { code: '42501' }));
+  await flush();
+  assert.equal(engine.getStatus(), SyncStatus.DENIED);
+  // The coalesced follow-up that was pending must not have been allowed to fire after denial.
+  assert.equal(adapter.calls.hydrate.length, 1);
 });
 
 test('disconnect unsubscribes, releases the adapter and returns to idle', async () => {

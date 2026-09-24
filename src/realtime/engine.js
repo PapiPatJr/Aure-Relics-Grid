@@ -21,6 +21,16 @@ export function isRevisionConflict(error) {
   return Boolean(error) && error.code === '40001';
 }
 
+/**
+ * True when `error` is the backend's authorization rejection (SQLSTATE 42501), and only that —
+ * a malformed command, a network failure or any other server error must never be misclassified
+ * as an access denial. Used exclusively to decide DENIED vs ERROR on a failed hydrate(); mutate()
+ * errors are returned to the caller unclassified, unchanged from before.
+ */
+export function isAccessDeniedError(error) {
+  return Boolean(error) && error.code === '42501';
+}
+
 function createSessionContext(id) {
   return {
     id,
@@ -44,6 +54,12 @@ function createSessionContext(id) {
  * backend is the only authority. mutate() automatically attaches the current *applied* snapshot
  * revision as `expectedRevision`; an observed-but-not-yet-hydrated invalidation is never used
  * for that, and a rejected (e.g. stale, SQLSTATE 40001) mutation is never auto-replayed.
+ *
+ * A hydrate() rejection carrying SQLSTATE 42501 (and only that code — see isAccessDeniedError)
+ * enters `denied` rather than `error`, exactly like an adapter-pushed denied status: both tear
+ * down the live subscription immediately, clear both watermarks, and cancel any already-scheduled
+ * follow-up hydrate. Recovery from `denied` is always a later, explicit hydrate()/subscribe()
+ * call — nothing here waits for or reacts to a future invalidation once denied.
  *
  * @param {import('./types.js').SyncAdapter} adapter
  */
@@ -72,6 +88,24 @@ export function createSyncEngine(adapter) {
     setStatus(SyncStatus.IDLE);
   }
 
+  /**
+   * Single source of truth for entering `denied`, from either trigger (an adapter-pushed status,
+   * or — see performHydrate's catch below — a hydrate() rejection carrying SQLSTATE 42501).
+   * Immediately tears down the live subscription/channel (no denied socket sits around waiting
+   * for an invalidation that will never usefully arrive), clears both revision watermarks, and
+   * cancels any coalesced follow-up hydrate that was already scheduled — recovery is always a
+   * later, explicit hydrate()/subscribe() call, never automatic.
+   */
+  function enterDenied(targetCtx, detail) {
+    if (targetCtx !== ctx) return;
+    targetCtx.appliedRevision = null;
+    targetCtx.observedRevision = null;
+    targetCtx.rehydratePending = false;
+    unsubscribeAdapter?.();
+    unsubscribeAdapter = null;
+    setStatus(SyncStatus.DENIED, detail);
+  }
+
   async function performHydrate(targetCtx) {
     setStatus(SyncStatus.HYDRATING);
     let snapshot, revision;
@@ -79,7 +113,11 @@ export function createSyncEngine(adapter) {
       snapshot = await adapter.hydrate(targetCtx.id);
       revision = toBigInt(snapshot.revision);
     } catch (error) {
-      if (targetCtx === ctx) { setStatus(SyncStatus.ERROR, { error }); handlers.onError?.(error); }
+      if (targetCtx === ctx) {
+        if (isAccessDeniedError(error)) enterDenied(targetCtx, { error });
+        else setStatus(SyncStatus.ERROR, { error });
+        handlers.onError?.(error);
+      }
       throw error;
     }
     if (targetCtx !== ctx) return snapshot; // superseded by a session switch/disconnect
@@ -133,11 +171,7 @@ export function createSyncEngine(adapter) {
   async function handleAdapterStatus(targetCtx, next, detail) {
     if (targetCtx !== ctx) return; // stale callback from a torn-down subscription
     if (next === SyncStatus.DENIED) {
-      // Stop exposing synchronized state as current: an observed-but-unhydrated revision is
-      // discarded, and mutate() naturally becomes a structural error with no snapshot to pin to.
-      targetCtx.appliedRevision = null;
-      targetCtx.observedRevision = null;
-      setStatus(SyncStatus.DENIED, detail);
+      enterDenied(targetCtx, detail);
       return;
     }
     if (next === SyncStatus.SYNCED && status === SyncStatus.RECONNECTING) {

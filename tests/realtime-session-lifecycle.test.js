@@ -119,6 +119,17 @@ test('denied cancels both the periodic timer and the focus listener, and records
   assert.deepEqual(t.statuses.at(-1), [SyncStatus.DENIED, { reason: 'session closed' }]);
 });
 
+test('denied tears down the live subscription itself, not just this controller\'s own timers', async () => {
+  const adapter = createFakeAdapter();
+  adapter.setHydrateResult(async id => snap(id, '1'));
+  const { lifecycle, adapter: a } = build(adapter);
+  lifecycle.start(session);
+  await flush();
+  assert.equal(a.isSubscribed(session), true);
+  adapter.emitStatus(session, SyncStatus.DENIED, { reason: 'revoked' });
+  assert.equal(a.isSubscribed(session), false); // no denied socket sits around waiting for an invalidation
+});
+
 test('a focus event triggers engine.hydrate for the active session', async () => {
   const adapter = createFakeAdapter();
   adapter.setHydrateResult(async id => snap(id, '1'));

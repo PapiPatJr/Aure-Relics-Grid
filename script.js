@@ -2624,7 +2624,23 @@ function getRealtimeSessionPanel() {
   return realtimeSessionPanel;
 }
 
-function renderRealtimeTokenRow(token) {
+/**
+ * A declarative `[data-realtime-action]` control. Purely descriptive DOM — clicking it does
+ * nothing on its own; src/realtime/boardActions.js (an ES module, wired from src/entry/app.js)
+ * delegates the actual click and calls mutationBridge. This function has no imports and no
+ * behavior of its own so script.js can stay a plain classic script for the offline launch path.
+ */
+function createRealtimeActionButton(action, label, dataset = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "realtime-action-button";
+  button.dataset.realtimeAction = action;
+  Object.entries(dataset).forEach(([key, value]) => { button.dataset[key] = value; });
+  button.textContent = label;
+  return button;
+}
+
+function renderRealtimeTokenRow(token, authority) {
   const row = document.createElement("li");
   row.className = "realtime-token-row";
   row.dataset.tokenId = token.id;
@@ -2646,10 +2662,19 @@ function renderRealtimeTokenRow(token) {
     row.appendChild(condition);
   }
 
+  // Client-side gating is UX convenience only; the backend re-validates every mutation regardless.
+  if (authority?.canManage) {
+    row.appendChild(createRealtimeActionButton(
+      "toggle-token-visible",
+      token.isVisible ? "Hide from players" : "Reveal to players",
+      { tokenId: token.id }
+    ));
+  }
+
   return row;
 }
 
-function renderRealtimeCharacterCard(character) {
+function renderRealtimeCharacterCard(character, authority) {
   const card = document.createElement("li");
   card.className = "realtime-character-card";
   card.dataset.characterId = character.id;
@@ -2667,6 +2692,16 @@ function renderRealtimeCharacterCard(character) {
     statuses.className = "realtime-character-statuses";
     statuses.textContent = character.statuses.join(", ");
     card.appendChild(statuses);
+  }
+
+  if (authority?.ownCharacterId && authority.ownCharacterId === character.id) {
+    const hpControls = document.createElement("div");
+    hpControls.className = "realtime-character-hp-controls";
+    hpControls.append(
+      createRealtimeActionButton("adjust-own-hp", "-1 HP", { characterId: character.id, delta: "-1" }),
+      createRealtimeActionButton("adjust-own-hp", "+1 HP", { characterId: character.id, delta: "1" })
+    );
+    card.appendChild(hpControls);
   }
 
   return card;
@@ -2702,15 +2737,23 @@ function applyRealtimeSnapshot(view) {
   heading.textContent = `Online session — Round ${view.roundNumber ?? "—"}`;
   panel.appendChild(heading);
 
+  if (view.authority?.canManage) {
+    panel.appendChild(createRealtimeActionButton("advance-round", "Advance round"));
+  }
+
   const tokenList = document.createElement("ul");
   tokenList.className = "realtime-token-list";
-  (view.tokens || []).forEach(token => tokenList.appendChild(renderRealtimeTokenRow(token)));
+  (view.tokens || []).forEach(token => tokenList.appendChild(renderRealtimeTokenRow(token, view.authority)));
   panel.appendChild(tokenList);
 
   const characterList = document.createElement("ul");
   characterList.className = "realtime-character-list";
-  (view.characters || []).forEach(character => characterList.appendChild(renderRealtimeCharacterCard(character)));
+  (view.characters || []).forEach(character => characterList.appendChild(renderRealtimeCharacterCard(character, view.authority)));
   panel.appendChild(characterList);
+
+  if (view.authority?.canManage) {
+    panel.appendChild(createRealtimeActionButton("clear-initiative", "Clear initiative"));
+  }
 
   const initiativeList = document.createElement("ol");
   initiativeList.className = "realtime-initiative-list";

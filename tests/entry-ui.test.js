@@ -20,7 +20,7 @@ function fixture(t, hash = '#login', initialUser = null) {
   }
   let current = initialUser, authCallback, boots = 0, lobbyStatus = 'pending';
   let roster = [{ user_id: 'guest', display_name: '<img src=x onerror=alert(1)>', status: 'pending' }];
-  const calls = [];
+  const calls = [], channelCalls = [], removedChannels = [];
   const client = {
     auth: {
       getUser: async () => ({ data: { user: current } }),
@@ -48,8 +48,20 @@ function fixture(t, hash = '#login', initialUser = null) {
       if (name === 'get_guest_lobby') return { data: { status: lobbyStatus, campaign_name: 'Ember Court', session_name: 'First gathering' } };
       if (name === 'get_session_roster') return { data: roster };
       if (name === 'review_session_guest') roster = roster.map(row => ({ ...row, status: args.p_action === 'approve' ? 'approved' : 'revoked' }));
+      if (name === 'get_session_snapshot') {
+        return { data: { schemaVersion: 1, sessionId: args.p_session, campaignId: campaign, revision: '0', authority: { canManage: true, ownCharacterId: null }, session: { id: args.p_session, name: 'First gathering', status: 'active', activeLevelId: null }, roundNumber: 1, tokens: [], characters: [], initiative: [], dm: null } };
+      }
       return { data: null };
-    }
+    },
+    // Issue #8C: startEntry's board route additively starts a realtime session sync alongside
+    // the local board. A minimal fake channel keeps this fixture's synchronous subscribe() call
+    // from throwing; it never actually delivers an invalidation in these tests.
+    channel(topic) {
+      const fakeChannel = { topic, on: () => fakeChannel, subscribe: cb => { cb?.('SUBSCRIBED'); return fakeChannel; } };
+      channelCalls.push(fakeChannel);
+      return fakeChannel;
+    },
+    removeChannel(channel) { removedChannels.push(channel); },
   };
   const stop = startEntry(client, async () => { boots++; });
   t.after(() => {
@@ -59,7 +71,7 @@ function fixture(t, hash = '#login', initialUser = null) {
     }
   });
   return {
-    client, calls, document: dom.window.document, boots: () => boots,
+    client, calls, channelCalls, removedChannels, document: dom.window.document, boots: () => boots,
     click(action) { const el = document.querySelector(`[data-action="${action}"]`); assert.ok(el, `button ${action}`); el.click(); },
     submit(kind, values) {
       const form = document.querySelector(`[data-form="${kind}"]`); assert.ok(form);
@@ -91,6 +103,39 @@ test('DM login, campaign creation, session hosting and approval render through t
   app.externalLogout(); await settle();
   assert.equal(document.querySelector('#legacyBoard').hidden, true, 'cross-tab logout hides board immediately');
 });
+async function reachSessionBoard(t) {
+  const app = fixture(t); await settle();
+  app.submit('login', { email: 'dm@example.test', password: 'password123' }); await settle();
+  app.submit('campaign', { name: 'Ember Court' }); await settle();
+  app.submit('session', { name: 'First gathering' }); await settle();
+  app.click('board'); await settle();
+  return app;
+}
+
+test('leaving the board route tears down the realtime subscription (Issue #8C.1)', async t => {
+  const app = await reachSessionBoard(t);
+  assert.equal(app.channelCalls.length, 1);
+  assert.equal(app.removedChannels.length, 0);
+  document.querySelector('.entry-board-back').click(); await settle();
+  assert.equal(app.removedChannels.length, 1);
+  assert.equal(app.removedChannels[0], app.channelCalls[0]);
+});
+
+test('re-entering the board route starts a fresh realtime subscription (Issue #8C.1)', async t => {
+  const app = await reachSessionBoard(t);
+  document.querySelector('.entry-board-back').click(); await settle();
+  app.click('board'); await settle();
+  assert.equal(app.channelCalls.length, 2);
+  assert.equal(app.removedChannels.length, 1);
+});
+
+test('logout tears down the realtime subscription immediately (Issue #8C.1)', async t => {
+  const app = await reachSessionBoard(t);
+  assert.equal(app.channelCalls.length, 1);
+  app.click('logout'); await settle();
+  assert.ok(app.removedChannels.includes(app.channelCalls[0]));
+});
+
 test('registration without a session asks for email confirmation and does not enter dashboard', async t => {
   const app = fixture(t, '#register'); await settle();
   app.submit('register', { email: 'dm@example.test', password: 'password123' }); await settle();

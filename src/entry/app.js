@@ -1,5 +1,10 @@
 import { createEntryService, formatJoinCode, joinLink, isDm } from './service.js';
 import { mountCharacters } from '../characters/panel.js';
+import { createSyncEngine } from '../realtime/engine.js';
+import { createSupabaseSyncAdapter } from '../realtime/supabaseAdapter.js';
+import { createSessionLifecycle } from '../realtime/sessionLifecycle.js';
+import { reconcileBoardView } from '../realtime/boardBridge.js';
+import { wireRealtimeBoardActions } from '../realtime/boardActions.js';
 
 export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const e = escapeHtml;
@@ -18,6 +23,35 @@ export function startEntry(client, bootBoard) {
   let boardStarted = false, destroyed = false;
   let characterPanel = null;
   const clearCharacters = () => { characterPanel?.dispose(); characterPanel = null; };
+  // Realtime board sync (Issue #8C/#8C.1): additive to the local/offline board above, never a
+  // replacement for it. Lazily created once, then started/stopped as the board route is
+  // entered/left — never active for any route other than the DM's own online session board.
+  let realtimeEngine = null, realtimeLifecycle = null, realtimeBoardView = null, realtimeSessionId = null, unwireRealtimeActions = null;
+  function ensureRealtimeLifecycle() {
+    if (!realtimeLifecycle) {
+      realtimeEngine = createSyncEngine(createSupabaseSyncAdapter(client));
+      realtimeLifecycle = createSessionLifecycle(realtimeEngine, {
+        onSnapshot: snapshot => {
+          realtimeBoardView = reconcileBoardView(realtimeBoardView, snapshot);
+          window.aureRelicsApplyRealtimeSnapshot?.(realtimeBoardView);
+        },
+      });
+      unwireRealtimeActions = wireRealtimeBoardActions(realtimeEngine, () => realtimeSessionId, () => realtimeBoardView);
+    }
+    return realtimeLifecycle;
+  }
+  function stopRealtimeBoard() {
+    realtimeLifecycle?.stop();
+    realtimeSessionId = null;
+    realtimeBoardView = null;
+    window.aureRelicsApplyRealtimeSnapshot?.(null);
+  }
+  function startRealtimeBoard(sessionId) {
+    if (realtimeSessionId === sessionId) return; // already active for this session
+    realtimeSessionId = sessionId;
+    realtimeBoardView = null;
+    ensureRealtimeLifecycle().start(sessionId);
+  }
   const back = document.createElement('button');
   back.type = 'button'; back.className = 'entry-board-back'; back.textContent = 'Return to session'; back.hidden = true;
   document.querySelector('.app-header').append(back);
@@ -71,6 +105,7 @@ export function startEntry(client, bootBoard) {
   async function load() {
     const stamp = ++epoch;
     clearCharacters();
+    stopRealtimeBoard(); // every navigation leaves the previous board/session; re-armed below if we land back on one
     clearTimeout(timer); concealBoard(); issuedCode = '';
     shell('<p class="entry-loading">Opening the campaign hall…</p>');
     try {
@@ -108,6 +143,7 @@ export function startEntry(client, bootBoard) {
           document.body.classList.remove('entry-active');
           if (!boardStarted) { await bootBoard(); boardStarted = true; }
           if (stamp !== epoch) { concealBoard(); return; }
+          startRealtimeBoard(session.id);
           window.dispatchEvent(new Event('resize'));
           return;
         }
@@ -214,6 +250,7 @@ export function startEntry(client, bootBoard) {
     if (action === 'retry') return void load();
     void run(async valid => {
       if (action === 'logout') {
+        stopRealtimeBoard();
         await api.logout(); if (valid()) { user = null; capturedCode = ''; activeCampaign = null; activeSession = null; go('login'); }
       } else if (action === 'issue') {
         const secret = await api.issueCode(activeSession.id); if (!valid()) return;
@@ -238,13 +275,14 @@ export function startEntry(client, bootBoard) {
       // Callback must return before another Auth operation is started.
       ++epoch; concealBoard(); root.replaceChildren();
       clearCharacters();
+      stopRealtimeBoard();
       setTimeout(() => { if (!destroyed) void load(); }, 0);
     }
   }).data.subscription;
   const hashChanged = () => { void load(); };
   window.addEventListener('hashchange', hashChanged);
-  window.addEventListener('pagehide', () => { clearTimeout(timer); clearCharacters(); });
+  window.addEventListener('pagehide', () => { clearTimeout(timer); clearCharacters(); stopRealtimeBoard(); });
   window.addEventListener('pageshow', event => { if (event.persisted) void load(); });
   void load();
-  return () => { destroyed = true; ++epoch; clearCharacters(); clearTimeout(timer); subscription.unsubscribe(); window.removeEventListener('hashchange', hashChanged); back.remove(); };
+  return () => { destroyed = true; ++epoch; clearCharacters(); stopRealtimeBoard(); unwireRealtimeActions?.(); clearTimeout(timer); subscription.unsubscribe(); window.removeEventListener('hashchange', hashChanged); back.remove(); };
 }

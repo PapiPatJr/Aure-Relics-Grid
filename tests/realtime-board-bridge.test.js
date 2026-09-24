@@ -161,3 +161,49 @@ test('the offline/local board still initializes and behaves normally with the re
     dom.window.close();
   }
 });
+
+test('a manager (DM) view renders the round/token/initiative action buttons; a non-manager view renders none of them', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    const managerView = createBoardView(baseSnapshot({
+      authority: { canManage: true, ownCharacterId: null },
+      tokens: [{ id: 't1', kind: 'enemy', label: 'E1', isVisible: true }],
+    }));
+    window.aureRelicsApplyRealtimeSnapshot(managerView);
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    assert.ok(panel.querySelector('[data-realtime-action="advance-round"]'));
+    assert.ok(panel.querySelector('[data-realtime-action="toggle-token-visible"][data-token-id="t1"]'));
+    assert.ok(panel.querySelector('[data-realtime-action="clear-initiative"]'));
+
+    const playerView = createBoardView(baseSnapshot({
+      authority: { canManage: false, ownCharacterId: null },
+      tokens: [{ id: 't1', kind: 'enemy', label: 'E1', isVisible: true }],
+    }));
+    window.aureRelicsApplyRealtimeSnapshot(playerView);
+    assert.equal(panel.querySelector('[data-realtime-action="advance-round"]'), null);
+    assert.equal(panel.querySelector('[data-realtime-action="toggle-token-visible"]'), null);
+    assert.equal(panel.querySelector('[data-realtime-action="clear-initiative"]'), null);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('own-character HP controls render only for the character matching authority.ownCharacterId', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    const view = createBoardView(baseSnapshot({
+      authority: { canManage: false, ownCharacterId: 'c1' },
+      characters: [{ id: 'c1', name: 'Aria', hp: 5 }, { id: 'c2', name: 'Beorn', hp: 5 }],
+    }));
+    window.aureRelicsApplyRealtimeSnapshot(view);
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    const ownCard = panel.querySelector('[data-character-id="c1"]');
+    const otherCard = panel.querySelector('[data-character-id="c2"]');
+    assert.ok(ownCard.querySelector('[data-realtime-action="adjust-own-hp"]'));
+    assert.equal(otherCard.querySelector('[data-realtime-action="adjust-own-hp"]'), null);
+  } finally {
+    dom.window.close();
+  }
+});

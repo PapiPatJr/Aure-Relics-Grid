@@ -3,6 +3,101 @@
 Branch: `v09-08c-board-integration`; base: `ad73746` (merge of Issue 8A `9ac8387` + Issue 8B.1
 `576b9a1` onto `main` `af54f0c`). Plan: `docs/superpowers/plans/2026-09-24-issue-08c-realtime-integration.md`.
 
+## 2026-09-24 update — Issue #8C.1 (final runtime activation pass)
+
+Closes the four remaining gaps the first 8C pass named explicitly rather than silently: the
+`denied`-vs-`error` classification gap, the panel/hooks being unwired scaffolding, and no real
+mutation UI. Commits `f0d6768` and `15ef38a` on top of `bc2b309`.
+
+**1. Hydrate auth denial** — `engine.js` now exports `isAccessDeniedError(error)` (checks
+`error.code === '42501'` and only that code). `performHydrate`'s catch branch enters `denied`
+(via a new shared `enterDenied()` helper, also used by the pre-existing adapter-pushed-status
+path) when a hydrate rejection is access-denied; every other failure — malformed command, network
+error, any other SQLSTATE — still maps to `error`, unchanged. This directly resolves the gap
+flagged in the original 8C verification: the common real case (a revoked player's next scheduled
+hydrate simply failing) now correctly reports `denied`.
+
+**2. Denied teardown** — `enterDenied()` is the single source of truth for entering `denied` from
+either trigger. It now also immediately tears down the live adapter subscription/channel (calling
+the stored `unsubscribeAdapter`) and clears any already-coalesced follow-up hydrate
+(`rehydratePending = false`), in addition to the existing watermark clearing. No denied socket is
+left open waiting for an invalidation that will never usefully arrive. `sessionLifecycle.js` is
+unchanged in behavior — its own timer cancellation on `denied` already composed correctly with the
+engine now also tearing down the subscription itself — but gained one new test confirming the
+composed result.
+
+**3. App lifecycle ownership** — `src/entry/app.js` now lazily builds one
+`createSyncEngine(createSupabaseSyncAdapter(client))` + `createSessionLifecycle` instance and
+starts it (`startRealtimeBoard`) only when the DM's own online session board route is actually
+entered, rendering snapshots through `boardBridge.reconcileBoardView` +
+`window.aureRelicsApplyRealtimeSnapshot`. `stopRealtimeBoard()` runs unconditionally at the top of
+every `load()` (covers leaving the board route and session switching, since any navigation
+re-enters `load()`), explicitly in the `logout` action handler (immediate, not waiting for the
+deferred reload after `api.logout()`), in the external auth-state-change handler, in `pagehide`,
+and in `startEntry`'s own teardown function — mirroring exactly where `clearCharacters()` already
+runs for the existing character panel. Offline/local board behavior is unchanged: the realtime
+engine is never constructed unless the board route is actually reached, and nothing here touches
+any existing `script.js` function or state.
+
+**4. Real mutation wiring, no new UI surface** — `src/realtime/boardActions.js`
+(`wireRealtimeBoardActions`) delegates clicks on the *existing* (already-built, previously
+read-only) realtime panel's new `[data-realtime-action]` controls to `mutationBridge`, for exactly
+the four supported commands. `script.js`'s `applyRealtimeSnapshot`/`renderRealtime*` functions now
+render these as plain declarative buttons, gated by the snapshot's own `authority.canManage` /
+`authority.ownCharacterId` fields — client-side gating is UX convenience only, hiding an
+obviously-unauthorized control; the backend re-validates every mutation regardless, exactly as
+before. No movement/fog/terrain command, no generic mutation path, and no new *page/panel* — the
+buttons live inside the panel Issue #8C already built. Offline/local mode is unaffected (these
+buttons only ever render inside the realtime panel, which does not exist offline).
+
+**5. Conflict behavior** — unchanged from the first 8C pass (`mutateWithConflictRecovery`,
+already covered by `tests/realtime-mutation-bridge.test.js`); `boardActions.js` reuses it directly
+rather than re-implementing it, confirmed by a dedicated test that a stale mutation triggered
+through a UI click still re-hydrates exactly once and never auto-replays.
+
+**6. Tests added:**
+
+| File | New tests |
+| --- | --- |
+| `tests/realtime.test.js` | 4 — 42501→denied; malformed/network/generic-code stays error; both denied triggers tear down the subscription immediately; a coalesced follow-up never slips through after denial |
+| `tests/realtime-session-lifecycle.test.js` | 1 — denied tears down the live subscription itself, not just the controller's own timers |
+| `tests/realtime-board-actions.test.js` (new file) | 9 — exact payload per command, conflict-recovery reuse, no-op guards (unrelated click, no session/view, stale id reference), idempotent cleanup |
+| `tests/realtime-board-bridge.test.js` | 2 — manager view renders the round/token/initiative controls and a non-manager view renders none; own-character HP controls render only for the matching character |
+| `tests/entry-ui.test.js` | 3 — leaving the board route tears down the real subscription (asserted via real `channel()`/`removeChannel()` calls through the fake Supabase client), re-entering starts a fresh one, logout tears it down immediately |
+
+Total added this pass: 19 tests (96/96 → 115/115 in `npm run check`).
+
+**Verification results:**
+
+| Check | Result |
+| --- | --- |
+| `npm.cmd run check` | PASS; 115/115 |
+| `npm.cmd run build` | PASS; Vite production build (65 modules — `src/entry/app.js` now pulls in the realtime modules, as expected) |
+| `npm.cmd run audit` | PASS; 0 vulnerabilities |
+| `node --test tests/realtime.test.js` | PASS; 26/26 |
+| `node --test tests/realtime-session-lifecycle.test.js` | PASS; 11/11 |
+| `node --test tests/realtime-board-actions.test.js` | PASS; 9/9 |
+| `node --test tests/realtime-board-bridge.test.js` | PASS; 15/15 |
+| `node --test tests/entry-ui.test.js` | PASS; 10/10 |
+
+**Existing-fixture change required:** `tests/entry-ui.test.js`'s fake Supabase client previously
+had no `channel()` method. Once the board route additively starts real realtime sync, its
+synchronous `subscribe()` call reaches `client.channel(...)`; without a stub this threw and broke
+the pre-existing "DM login, campaign creation, session hosting and approval" test (confirmed by
+running it before making this fix — it failed exactly as predicted). Added a minimal fake
+`channel()`/`removeChannel()` plus a `get_session_snapshot` RPC branch; no other existing test
+behavior changed, and the fix is exactly as narrow as the new dependency it accommodates.
+
+**Files changed this pass:** `src/realtime/engine.js`, `src/realtime/boardActions.js` (new),
+`src/entry/app.js`, `script.js`, `tests/realtime.test.js`, `tests/realtime-session-lifecycle.test.js`,
+`tests/realtime-board-actions.test.js` (new), `tests/realtime-board-bridge.test.js`,
+`tests/entry-ui.test.js`. No Supabase/RLS/backend file touched; `tests/e2e/**` untouched.
+
+**Known limitation carried forward:** the adapter's own `isAuthorizationErrorPayload` heuristic on
+the subscribe-status path (documented in the original 8C section above) is now a secondary path to
+`denied` — the primary, common path is the hydrate-time 42501 classification added in this pass.
+Both compose correctly through the same `enterDenied()` helper.
+
 ## Scope
 
 Integrates the already-implemented, already-merged Issue 8A backend and Issue 8B client engine:

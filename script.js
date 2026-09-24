@@ -2602,4 +2602,134 @@ function initializeApp() {
   setActiveTool("wall", elements.wallTool);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Realtime session bridge (Issue #8C). Read-only: this block never reads or writes tokenData,
+// the grid, or initiativeEntries, so local scene editing and the offline launch path above are
+// completely unaffected by its presence. It only renders whatever BoardView
+// src/realtime/boardBridge.js hands it. Editing synced state goes through
+// src/realtime/mutationBridge.js, never through this panel.
+// ---------------------------------------------------------------------------------------------
+let realtimeSessionPanel = null;
+
+function getRealtimeSessionPanel() {
+  if (!realtimeSessionPanel) {
+    realtimeSessionPanel = document.createElement("section");
+    realtimeSessionPanel.id = "realtimeSessionPanel";
+    realtimeSessionPanel.className = "realtime-session-panel";
+    realtimeSessionPanel.setAttribute("aria-label", "Online session (read-only)");
+    realtimeSessionPanel.hidden = true;
+    document.body.appendChild(realtimeSessionPanel);
+  }
+
+  return realtimeSessionPanel;
+}
+
+function renderRealtimeTokenRow(token) {
+  const row = document.createElement("li");
+  row.className = "realtime-token-row";
+  row.dataset.tokenId = token.id;
+
+  const label = document.createElement("span");
+  label.className = "realtime-token-label";
+  label.textContent = token.label ?? "";
+
+  const kind = document.createElement("span");
+  kind.className = "realtime-token-kind";
+  kind.textContent = token.kind ?? "";
+
+  row.append(label, kind);
+
+  if (token.conditionLabel) {
+    const condition = document.createElement("span");
+    condition.className = "realtime-token-condition";
+    condition.textContent = token.conditionLabel;
+    row.appendChild(condition);
+  }
+
+  return row;
+}
+
+function renderRealtimeCharacterCard(character) {
+  const card = document.createElement("li");
+  card.className = "realtime-character-card";
+  card.dataset.characterId = character.id;
+
+  const name = document.createElement("h4");
+  name.textContent = character.name ?? "";
+
+  const meta = document.createElement("p");
+  meta.textContent = `${character.playerName ?? ""} · HP ${character.hp ?? "—"}/${character.maxHp ?? "—"} · AC ${character.ac ?? "—"}`;
+
+  card.append(name, meta);
+
+  if (Array.isArray(character.statuses) && character.statuses.length) {
+    const statuses = document.createElement("p");
+    statuses.className = "realtime-character-statuses";
+    statuses.textContent = character.statuses.join(", ");
+    card.appendChild(statuses);
+  }
+
+  return card;
+}
+
+function renderRealtimeInitiativeRow(entry) {
+  const row = document.createElement("li");
+  row.className = "realtime-initiative-row";
+  if (entry.isActive) {
+    row.classList.add("active-combatant");
+  }
+  row.textContent = `${entry.initiative ?? "—"} — ${entry.tokenId ?? ""}`;
+  return row;
+}
+
+/**
+ * Render a src/realtime/boardBridge.js BoardView (or null/undefined to hide/clear). Called by
+ * src/realtime/** integration code; never called from any local/offline code path above.
+ */
+function applyRealtimeSnapshot(view) {
+  const panel = getRealtimeSessionPanel();
+
+  if (!view) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+
+  panel.hidden = false;
+  panel.innerHTML = "";
+
+  const heading = document.createElement("h3");
+  heading.textContent = `Online session — Round ${view.roundNumber ?? "—"}`;
+  panel.appendChild(heading);
+
+  const tokenList = document.createElement("ul");
+  tokenList.className = "realtime-token-list";
+  (view.tokens || []).forEach(token => tokenList.appendChild(renderRealtimeTokenRow(token)));
+  panel.appendChild(tokenList);
+
+  const characterList = document.createElement("ul");
+  characterList.className = "realtime-character-list";
+  (view.characters || []).forEach(character => characterList.appendChild(renderRealtimeCharacterCard(character)));
+  panel.appendChild(characterList);
+
+  const initiativeList = document.createElement("ol");
+  initiativeList.className = "realtime-initiative-list";
+  (view.initiative || []).forEach(entry => initiativeList.appendChild(renderRealtimeInitiativeRow(entry)));
+  panel.appendChild(initiativeList);
+
+  if (view.dm) {
+    const dmSection = document.createElement("section");
+    dmSection.className = "realtime-dm-section";
+    dmSection.setAttribute("aria-label", "DM-only projection");
+
+    const dmHeading = document.createElement("h4");
+    dmHeading.textContent = "DM view";
+    dmSection.appendChild(dmHeading);
+
+    panel.appendChild(dmSection);
+  }
+}
+
+window.aureRelicsApplyRealtimeSnapshot = applyRealtimeSnapshot;
+
 initializeApp();

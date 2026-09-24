@@ -59,7 +59,9 @@ insert into terrain_objects(campaign_id,level_id,label,x,y,width,is_visible) val
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','Partly in fog',0,0,2,true);
 
 select is((select count(*)::int from pg_tables where schemaname in ('public','private') and not rowsecurity),0,'every application table has RLS');
-select is((select count(*)::int from pg_publication_tables where pubname = 'supabase_realtime' and schemaname in ('public','private')),0,'no sensitive tables published to Realtime');
+-- Issue #8A publishes only its independently tested, payload-free notification table.
+select is((select count(*)::int from pg_publication_tables where pubname = 'supabase_realtime' and schemaname in ('public','private')
+  and not (schemaname='public' and tablename='session_events')),0,'no sensitive tables published to Realtime');
 select is((select count(*)::int from storage.buckets where id in ('character-images','terrain-assets','map-assets') and not public),3,'all buckets private');
 
 set local role authenticated;

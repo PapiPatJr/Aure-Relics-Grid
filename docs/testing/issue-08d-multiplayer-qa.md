@@ -24,74 +24,65 @@ test run.
 
 No shared fixture/configuration file is modified.
 
-## Current Test Status
-
-`realtime harness creates three isolated approved identities in one session` is
-expected to pass before Issue #8 integration. It proves setup/approval isolation,
-independent anonymous identities, peer roster visibility, and guest board
-isolation.
-
-The remaining tests are strict expected failures unless
-`AURE_REALTIME_READY=1` is set:
-
-- public character update reaches the DM and Player B, then still reaches Player
-  B after browser reload
-- a revoked participant cannot retrieve the session panel, reach the local board,
-  or establish a new Realtime subscription
-
-This branch intentionally has no Realtime publication, so a subscription timeout,
-channel error, or missing event is an **expected missing-feature failure**. Do not
-weaken the event, reload, or projection assertions to make it pass.
-
-A **harness defect** is any failure in the prerequisite test, cleanup, local-only
-traffic enforcement, identity isolation, expected-denial accounting, or parsing.
-Fix those defects in this package before integration.
-
 ## Realtime Contract Exercised
 
-The acceptance probe uses each browser's normal configured Supabase client. It
-subscribes to `public.characters` `UPDATE` changes filtered by campaign ID and
-waits for the expected `id` and `hp` values. The test requires:
+The transport is `public.session_events` INSERT only. Each row is an invalidation
+with exactly `schema_version`, `id`, `session_id`, `revision`, and `type`; it is
+not state and contains no entity IDs, values, labels, private fields, or secrets.
+The harness observes these events only as transport diagnostics.
 
-1. DM and approved Player B can subscribe to the permitted public character row.
-2. Player A's permitted character update reaches both subscribers.
-3. The received row contains the public ID/campaign/HP fields and no `code_hash`,
-   `dm_notes`, `private_notes`, or `secret` field.
-4. Player B can reload, resubscribe as the same identity, and receive the next
-   permitted change.
-5. After session revocation, Player B cannot retrieve `get_character_panel` or
-   establish a new Realtime subscription.
+All state assertions use the production `createSupabaseSyncAdapter` →
+`createSyncEngine` → `createSessionLifecycle` path, whose only authority is
+`get_session_snapshot`. The DM enters the actual 8C.1 board route and its rendered
+realtime panel is asserted after Player A updates a character. Player A and Player
+B run the same production lifecycle in their isolated browser contexts because the
+current app intentionally starts the lifecycle only on the DM board route; the
+player route remains the Issue #6 lobby.
 
-The test does not assert fog, movement, terrain, locations, levels, hidden-token
-rendering, or a fabricated board UI. Those need their own implemented surfaces.
-Existing Issue #6/#7 E2E coverage remains the authority for DM-B campaign
-isolation, route manipulation, code handling, and character ownership denials.
+The strict acceptance suite proves:
 
-## Integration Sequence
+1. Three isolated identities share one campaign/session and both players are
+   approved.
+2. Player A's permitted character update emits sanitized invalidations to the DM
+   and Player B, then both authorized lifecycles hydrate the updated character.
+3. Player snapshots contain no DM projection and character cards expose only the
+   explicit public field set.
+4. Player B reloads, returns to the normal approved lobby, re-establishes the
+   production lifecycle, and receives the next invalidation plus hydrated state.
+5. Revoking Player B makes `get_session_snapshot` fail with `42501`; a forced
+   production-lifecycle hydrate reaches `denied`, clears its watermarks and
+   consumer snapshot, and removes the active realtime channel.
+6. Reload and an explicit re-entry attempt without renewed approval remain
+   denied. The test does not require a realtime socket attempt itself to fail.
 
-1. 8A publishes only authorized public state and makes revocation close or deny
-   new subscriptions. Never publish private schemas, code rows, DM notes, exact
-   enemy HP, or unprojected snapshots.
-2. 8B consumes the same authorized projection for hydration/reconnect and keeps
-   its own state transitions separate from these browser probes.
-3. Start the local Aure Supabase stack, then run the prerequisite test:
+The suite does not fabricate fog, movement, terrain, locations, levels, or a
+player board UI. Existing Issue #6/#7 E2E coverage remains the authority for DM-B
+campaign isolation, route manipulation, code handling, and character ownership
+denials.
+
+## Run
+
+Start the disposable isolated 8A stack described in `docs/testing/issue-08a-verification.md`, then run the full strict suite against it:
 
 ```powershell
-npm.cmd run test:e2e -- tests/e2e/realtime.spec.js -g "realtime harness"
-```
-
-4. Run the complete realtime acceptance suite in strict mode after 8A/8B merge:
-
-```powershell
-$env:AURE_REALTIME_READY = '1'
+$env:AURE_TEST_STACK = '08a'
 npm.cmd run test:e2e -- tests/e2e/realtime.spec.js
-Remove-Item Env:AURE_REALTIME_READY
+Remove-Item Env:AURE_TEST_STACK
 ```
 
-Without that variable, Playwright reports the feature cases as expected failures;
-with it, any failure is a real integration failure. An unexpected pass while the
-variable is absent is also intentionally surfaced, forcing the expected-failure
-gate to be removed during integration.
+There is no `AURE_REALTIME_READY` switch and no expected-failure mode. Any suite
+failure is a harness, production integration, authorization, projection, or local
+environment failure that must be classified rather than masked.
+
+`tests/e2e/local-stack.mjs` accepts only `foundation` (the pre-Issue-8 default)
+or the explicit `08a` isolated project. It rejects hosted endpoints, arbitrary
+stack names, mismatched project IDs, database ports, and non-public frontend keys.
+
+The current 8C.1 route ownership is a product-integration limitation rather than
+a server authorization defect: player browsers do not automatically start a
+session lifecycle through their normal lobby route. The QA harness therefore uses
+the actual production lifecycle directly in those contexts. A future player board
+route should replace that test-only mounting path, not duplicate its sync engine.
 
 Desktop Chromium runs at 1440x1000 and narrow Chromium at 390x844. Narrow testing
 is a resized desktop Chromium viewport and does not claim native mobile coverage.

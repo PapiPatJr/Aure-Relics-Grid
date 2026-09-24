@@ -300,8 +300,15 @@ Use the existing client `SyncStatus` vocabulary: `idle`, `hydrating`, `synced`,
 `reconnecting`, `denied`, `error`, `closed`. Initial subscription/hydration maps to
 `hydrating`; successful snapshot installation to `synced`; transport interruption
 to `reconnecting`; authorization failure to `denied`; unrecoverable validation or
-transport failure to `error`; explicit disconnect to `closed`. `idle` is the
-pre-connect state. These are lifecycle states, never backend roles.
+transport failure to `error`; unexpected transport closure to `closed`. Explicit
+engine disconnect/lifecycle stop returns to `idle`, also the pre-connect state.
+These are lifecycle states, never backend roles.
+
+Transport readiness alone never establishes authorization or consumer `synced`.
+Both transport denial and snapshot SQLSTATE `42501` clear synchronized views and
+watermarks, invalidate pending reads/recovery callbacks, remove the subscription,
+and stop automatic recovery. Re-entry requires an explicit start/subscribe (or an
+explicit standalone hydrate); abandoned mutation conflicts cannot restart it.
 
 The production sequence is database mutation -> sanitized invalidation -> revision
 notification -> secure hydration -> UI snapshot. No event patches authoritative

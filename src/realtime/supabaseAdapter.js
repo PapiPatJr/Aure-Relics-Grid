@@ -2,11 +2,13 @@ import { SyncStatus } from './types.js';
 
 /** Normalize a raw `session_events` row (snake_case) into the engine's InvalidationEnvelope shape. */
 function normalizeEvent(row) {
+  if (!row || row.schema_version !== 1 || row.type !== 'session.invalidated' ||
+      typeof row.revision !== 'string' || !/^(0|[1-9]\d*)$/.test(row.revision)) return null;
   return {
     schemaVersion: row.schema_version,
     id: row.id,
     sessionId: row.session_id,
-    revision: typeof row.revision === 'string' ? row.revision : String(row.revision),
+    revision: row.revision,
     type: row.type,
   };
 }
@@ -24,8 +26,9 @@ function isAuthorizationErrorPayload(err) {
   if (!err) return false;
   const code = err.code ?? err.status;
   if (code === '42501' || code === 401 || code === 403) return true;
-  const message = String(err.message ?? err.reason ?? '').toLowerCase();
-  return message.includes('not authorized') || message.includes('permission denied') || message.includes('access denied');
+  // Free text can describe a proxy, filesystem, or server failure. Without a typed
+  // authorization code keep recovering; a secure snapshot RPC can establish denial.
+  return false;
 }
 
 /**
@@ -77,7 +80,8 @@ export function createSupabaseSyncAdapter(client) {
         filter: `session_id=eq.${sessionId}`,
       }, payload => {
         if (!isCurrent()) return; // stale callback from an old subscribe()/disconnect() generation
-        onEvent(normalizeEvent(payload.new));
+        const event = normalizeEvent(payload.new);
+        if (event) onEvent(event);
       });
 
       channel.subscribe((status, err) => {

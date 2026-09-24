@@ -11,7 +11,7 @@ const code = `${campaign}.${session}.${'a'.repeat(64)}`;
 const delay = () => new Promise(resolve => setTimeout(resolve, 0));
 async function settle() { for (let i = 0; i < 8; i++) await delay(); }
 
-function fixture(t, hash = '#login', initialUser = null) {
+function fixture(t, hash = '#login', initialUser = null, boot = async () => {}) {
   const dom = new JSDOM('<header class="app-header"></header><main id="onlineEntry" hidden></main><div id="legacyBoard" hidden>Local board</div>', { url: `https://aure.example/${hash}` });
   const originals = new Map();
   for (const key of ['window', 'document', 'location', 'history', 'FormData', 'Event']) {
@@ -57,13 +57,14 @@ function fixture(t, hash = '#login', initialUser = null) {
     // the local board. A minimal fake channel keeps this fixture's synchronous subscribe() call
     // from throwing; it never actually delivers an invalidation in these tests.
     channel(topic) {
-      const fakeChannel = { topic, on: () => fakeChannel, subscribe: cb => { cb?.('SUBSCRIBED'); return fakeChannel; } };
+      let statusCallback;
+      const fakeChannel = { topic, on: () => fakeChannel, subscribe: cb => { statusCallback = cb; cb?.('SUBSCRIBED'); return fakeChannel; }, emitStatus: (...args) => statusCallback?.(...args) };
       channelCalls.push(fakeChannel);
       return fakeChannel;
     },
     removeChannel(channel) { removedChannels.push(channel); },
   };
-  const stop = startEntry(client, async () => { boots++; });
+  const stop = startEntry(client, async () => { boots++; await boot(); });
   t.after(() => {
     stop(); dom.window.close();
     for (const [key, descriptor] of originals) {
@@ -82,6 +83,45 @@ function fixture(t, hash = '#login', initialUser = null) {
     externalLogout() { current = null; authCallback('SIGNED_OUT', null); }
   };
 }
+
+test('board clears its synchronized projection on transport or snapshot denial', async t => {
+  const app = fixture(t, `#board/${session}`, dm);
+  const rendered = [];
+  window.aureRelicsApplyRealtimeSnapshot = view => rendered.push(view);
+  await settle();
+  assert.ok(rendered.at(-1));
+  app.channelCalls.at(-1).emitStatus('CHANNEL_ERROR', { code: '42501' });
+  await settle();
+  assert.equal(rendered.at(-1), null);
+  assert.equal(app.removedChannels.length, 1);
+});
+
+test('board clears its synchronized projection on snapshot RPC 42501', async t => {
+  const app = fixture(t, `#board/${session}`, dm);
+  const rendered = [];
+  window.aureRelicsApplyRealtimeSnapshot = view => rendered.push(view);
+  await settle();
+  assert.ok(rendered.at(-1));
+  const originalRpc = app.client.rpc;
+  app.client.rpc = (name, args) => name === 'get_session_snapshot'
+    ? Promise.resolve({ data: null, error: { code: '42501' } }) : originalRpc(name, args);
+  window.dispatchEvent(new Event('focus'));
+  await settle();
+  assert.equal(rendered.at(-1), null);
+  assert.equal(app.removedChannels.length, 1);
+});
+
+test('pagehide invalidates board startup already awaiting its import', async t => {
+  let finishBoot;
+  const pending = new Promise(resolve => { finishBoot = resolve; });
+  const app = fixture(t, `#board/${session}`, dm, () => pending);
+  await settle();
+  assert.equal(app.boots(), 1);
+  window.dispatchEvent(new Event('pagehide'));
+  finishBoot();
+  await settle();
+  assert.equal(app.channelCalls.length, 0);
+});
 
 test('DM login, campaign creation, session hosting and approval render through the entry flow', async t => {
   const app = fixture(t); await settle();

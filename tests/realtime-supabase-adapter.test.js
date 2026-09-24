@@ -62,14 +62,14 @@ test('subscribe normalizes a session_events row into the InvalidationEnvelope sh
   assert.deepEqual(events, [{ schemaVersion: 1, id: 'evt-1', sessionId: session, revision: '43', type: 'session.invalidated' }]);
 });
 
-test('subscribe stringifies a numeric revision defensively', async () => {
+test('subscribe rejects numeric revisions rather than blessing already rounded numbers', async () => {
   const client = createFakeSupabaseClient();
   const adapter = createSupabaseSyncAdapter(client);
   const events = [];
   adapter.subscribe(session, { onEvent: e => events.push(e), onStatus: () => {} });
   client.channels.at(-1).emitRow({ schema_version: 1, id: 'evt-1', session_id: session, revision: 43, type: 'session.invalidated' });
-  assert.equal(events[0].revision, '43');
-  assert.equal(typeof events[0].revision, 'string');
+  client.channels.at(-1).emitRow({ schema_version: 1, id: 'evt-2', session_id: session, revision: Number('9007199254740993'), type: 'session.invalidated' });
+  assert.deepEqual(events, []);
 });
 
 test('subscribe passes the required postgres_changes_options.wait config and filters to the session', async () => {
@@ -107,6 +107,17 @@ test('a CHANNEL_ERROR carrying a recognizable authorization payload maps to deni
   adapter.subscribe(session, { onEvent: () => {}, onStatus: (s, d) => statuses.push(d ? [s, d.error.message] : s) });
   client.channels.at(-1).emitStatus('CHANNEL_ERROR', Object.assign(new Error('permission denied for table session_events'), { code: '42501' }));
   assert.deepEqual(statuses, [[SyncStatus.DENIED, 'permission denied for table session_events']]);
+});
+
+test('a server or network error mentioning permissions is not an authorization denial', () => {
+  const client = createFakeSupabaseClient();
+  const adapter = createSupabaseSyncAdapter(client);
+  const statuses = [];
+  adapter.subscribe(session, { onEvent: () => {}, onStatus: s => statuses.push(s) });
+  const channel = client.channels.at(-1);
+  channel.emitStatus('CHANNEL_ERROR', { code: '500', message: 'permission denied opening server log' });
+  channel.emitStatus('CHANNEL_ERROR', new Error('proxy access denied'));
+  assert.deepEqual(statuses, [SyncStatus.RECONNECTING, SyncStatus.RECONNECTING]);
 });
 
 test('CLOSED reported by the channel maps to closed, but not when it is this adapter\'s own teardown', async () => {

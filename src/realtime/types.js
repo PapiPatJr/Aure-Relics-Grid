@@ -80,7 +80,9 @@ export const SyncStatus = Object.freeze({
  *   Start live delivery for sessionId. Returns an idempotent unsubscribe function. The adapter
  *   owns transport-level reconnect and subscription readiness (e.g. Supabase's `wait: true`
  *   option so `SUBSCRIBED` means the database subscription is actually ready, not just the
- *   channel join) and must report status transitions via `onStatus`. It must not deliver
+ *   channel join) and must report status transitions via `onStatus`. Adapter `synced` means
+ *   transport readiness only; the engine waits for this signal, then hydrates before reporting
+ *   `synced` to consumers. The same barrier applies after every reconnect. It must not deliver
  *   `onEvent` invalidations before its own transport is ready to do so correctly.
  * @property {(sessionId: string, command: MutationCommand & { schemaVersion: number, expectedRevision: string }) => Promise<unknown>} mutate
  *   Submit a mutation with the engine-attached `expectedRevision`. Backend authorization is

@@ -80,13 +80,14 @@ export function createSessionLifecycle(engine, options = {}) {
         if (myGeneration !== generation) return;
         if (status === SyncStatus.DENIED) {
           lastDenialDetail = detail ?? null;
+          generation += 1; // invalidate already-queued timer/focus callbacks as well
           teardownTimers(); // stop auto-recovery attempts; engine.js already cleared its own watermarks
         }
         onStatus?.(status, detail);
       },
       onError: error => { if (myGeneration === generation) onError?.(error); },
     });
-    armTimers(myGeneration, targetSession);
+    if (myGeneration === generation) armTimers(myGeneration, targetSession);
   }
 
   return {

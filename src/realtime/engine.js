@@ -34,10 +34,16 @@ export function isAccessDeniedError(error) {
 function createSessionContext(id) {
   return {
     id,
+    token: Symbol('session lifetime'),
     appliedRevision: null, // bigint|null — last snapshot actually installed; the sole authoritative watermark
     observedRevision: null, // bigint|null — latest invalidation/snapshot revision seen; may run ahead of applied
     inFlightHydrate: null, // Promise<SessionSnapshot>|null
     rehydratePending: false, // an invalidation arrived while a hydrate for this session was already in flight
+    forceHydrate: false,
+    transportReady: true, // standalone hydration has no subscription barrier
+    transportEpoch: 0,
+    initialReadiness: null,
+    releaseReadiness: null,
   };
 }
 
@@ -49,8 +55,8 @@ function createSessionContext(id) {
  *
  * Invalidations never carry state and are never exposed to consumers as data: they only ever
  * trigger a secure re-hydration, whose resulting snapshot is the one authoritative delivery.
- * The engine never infers permission from UI state; every SyncStatus it reports comes from the
- * adapter (ultimately the backend). It does not gate mutate() on its own cached status — the
+ * The engine never infers permission from UI state; statuses describe transport and hydration,
+ * and only the backend decides access. It does not gate mutate() on its own cached status — the
  * backend is the only authority. mutate() automatically attaches the current *applied* snapshot
  * revision as `expectedRevision`; an observed-but-not-yet-hydrated invalidation is never used
  * for that, and a rejected (e.g. stale, SQLSTATE 40001) mutation is never auto-replayed.
@@ -68,6 +74,7 @@ export function createSyncEngine(adapter) {
   let status = SyncStatus.IDLE;
   let handlers = {};
   let unsubscribeAdapter = null;
+  let subscriptionLifetime = null;
 
   function setStatus(next, detail) {
     if (status === next) return;
@@ -77,12 +84,14 @@ export function createSyncEngine(adapter) {
 
   /** Tears down any adapter subscription and starts a fresh, independent context for nextId. Any hydrate still in flight for the old context becomes a harmless no-op (it checks `targetCtx === ctx` before installing anything or scheduling a follow-up). */
   function resetSession(nextId) {
+    ctx.releaseReadiness?.();
     unsubscribeAdapter?.();
     unsubscribeAdapter = null;
     ctx = createSessionContext(nextId);
   }
 
   function teardown() {
+    subscriptionLifetime = null;
     resetSession(null);
     handlers = {};
     setStatus(SyncStatus.IDLE);
@@ -98,15 +107,14 @@ export function createSyncEngine(adapter) {
    */
   function enterDenied(targetCtx, detail) {
     if (targetCtx !== ctx) return;
-    targetCtx.appliedRevision = null;
-    targetCtx.observedRevision = null;
     targetCtx.rehydratePending = false;
-    unsubscribeAdapter?.();
-    unsubscribeAdapter = null;
+    // Replace the context: a successful or failed RPC already in flight cannot revive denial.
+    resetSession(targetCtx.id);
     setStatus(SyncStatus.DENIED, detail);
   }
 
   async function performHydrate(targetCtx) {
+    const transportEpoch = targetCtx.transportEpoch;
     setStatus(SyncStatus.HYDRATING);
     let snapshot, revision;
     try {
@@ -127,7 +135,7 @@ export function createSyncEngine(adapter) {
       handlers.onSnapshot?.(snapshot);
     }
     if (targetCtx.observedRevision === null || revision > targetCtx.observedRevision) targetCtx.observedRevision = revision;
-    setStatus(SyncStatus.SYNCED);
+    if (targetCtx.transportReady && transportEpoch === targetCtx.transportEpoch) setStatus(SyncStatus.SYNCED);
     return snapshot;
   }
 
@@ -139,18 +147,22 @@ export function createSyncEngine(adapter) {
    * call ends up installing, exactly one follow-up hydrate runs afterward — never a storm of one
    * hydrate per invalidation.
    */
-  function scheduleHydrate(targetCtx) {
+  function scheduleHydrate(targetCtx, force = true) {
     if (targetCtx.inFlightHydrate) {
       targetCtx.rehydratePending = true;
+      targetCtx.forceHydrate ||= force;
       return targetCtx.inFlightHydrate;
     }
     const attempt = performHydrate(targetCtx).finally(() => {
       targetCtx.inFlightHydrate = null;
-      if (targetCtx.rehydratePending && targetCtx === ctx) {
+      if (targetCtx.rehydratePending && targetCtx === ctx && (targetCtx.forceHydrate ||
+          targetCtx.appliedRevision === null || targetCtx.observedRevision > targetCtx.appliedRevision)) {
         targetCtx.rehydratePending = false;
+        targetCtx.forceHydrate = false;
         scheduleHydrate(targetCtx).catch(() => { /* already reported via onStatus/onError */ });
       } else {
         targetCtx.rehydratePending = false;
+        targetCtx.forceHydrate = false;
       }
     });
     targetCtx.inFlightHydrate = attempt;
@@ -164,8 +176,9 @@ export function createSyncEngine(adapter) {
     catch { return; } // malformed envelope from an adversarial/buggy transport: ignore, don't crash the stream
     if (targetCtx.observedRevision !== null && revision <= targetCtx.observedRevision) return; // duplicate or stale invalidation
     targetCtx.observedRevision = revision;
+    if (!targetCtx.transportReady) return; // buffer until the subscription barrier clears
     if (targetCtx.appliedRevision !== null && revision <= targetCtx.appliedRevision) return; // already covered by an installed snapshot
-    scheduleHydrate(targetCtx).catch(() => { /* already reported via onStatus/onError */ });
+    scheduleHydrate(targetCtx, false).catch(() => { /* already reported via onStatus/onError */ });
   }
 
   async function handleAdapterStatus(targetCtx, next, detail) {
@@ -174,10 +187,19 @@ export function createSyncEngine(adapter) {
       enterDenied(targetCtx, detail);
       return;
     }
-    if (next === SyncStatus.SYNCED && status === SyncStatus.RECONNECTING) {
+    if (next === SyncStatus.SYNCED) {
+      targetCtx.transportEpoch += 1;
+      targetCtx.transportReady = true;
+      targetCtx.initialReadiness = null;
+      targetCtx.releaseReadiness?.();
+      targetCtx.releaseReadiness = null;
       // Re-hydrate after reconnect so nothing missed during the gap is silently dropped.
       try { await scheduleHydrate(targetCtx); } catch { /* already reported */ }
       return;
+    }
+    if (next === SyncStatus.RECONNECTING || next === SyncStatus.CLOSED) {
+      targetCtx.transportReady = false;
+      targetCtx.transportEpoch += 1;
     }
     setStatus(next, detail);
   }
@@ -186,6 +208,11 @@ export function createSyncEngine(adapter) {
     /** Fetch and, if newer, install a snapshot for sessionId. Safe to call standalone or before subscribe(). Coalesces with any hydrate already in flight for this session (see scheduleHydrate). */
     hydrate(targetSession) {
       if (targetSession !== ctx.id) resetSession(targetSession);
+      if (ctx.initialReadiness) {
+        const targetCtx = ctx;
+        return targetCtx.initialReadiness.then(() => targetCtx === ctx
+          ? (targetCtx.inFlightHydrate ?? scheduleHydrate(targetCtx)) : undefined);
+      }
       return scheduleHydrate(ctx);
     },
 
@@ -196,16 +223,21 @@ export function createSyncEngine(adapter) {
      * @param {import('./types.js').SyncHandlers} [nextHandlers]
      */
     subscribe(targetSession, nextHandlers = {}) {
-      if (targetSession !== ctx.id) resetSession(targetSession);
-      else unsubscribeAdapter?.();
+      resetSession(targetSession);
       handlers = nextHandlers;
+      const lifetime = Symbol('subscription');
+      subscriptionLifetime = lifetime;
       const targetCtx = ctx;
-      unsubscribeAdapter = adapter.subscribe(targetSession, {
+      targetCtx.transportReady = false;
+      targetCtx.initialReadiness = new Promise(resolve => { targetCtx.releaseReadiness = resolve; });
+      setStatus(SyncStatus.HYDRATING);
+      const unsubscribe = adapter.subscribe(targetSession, {
         onEvent: event => onInvalidation(targetCtx, event),
         onStatus: (next, detail) => { void handleAdapterStatus(targetCtx, next, detail); },
       });
-      scheduleHydrate(targetCtx).catch(() => { /* already reported via onStatus/onError */ });
-      return teardown;
+      if (targetCtx === ctx) unsubscribeAdapter = unsubscribe;
+      else unsubscribe(); // synchronous denial during subscribe
+      return () => { if (subscriptionLifetime === lifetime) teardown(); };
     },
 
     /**
@@ -238,6 +270,8 @@ export function createSyncEngine(adapter) {
 
     getStatus: () => status,
     getSessionId: () => ctx.id,
+    /** Opaque lifetime token for guarding asynchronous mutation recovery across stop/re-entry. */
+    getContext: () => ctx.token,
     /** The authoritative applied-snapshot revision (decimal string), or null before any snapshot has installed. */
     getAppliedRevision: () => (ctx.appliedRevision === null ? null : ctx.appliedRevision.toString()),
     /** The latest revision observed from either a snapshot or an invalidation (decimal string), or null. May run ahead of getAppliedRevision() while a re-hydration is in flight. */

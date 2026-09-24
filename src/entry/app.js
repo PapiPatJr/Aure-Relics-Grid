@@ -35,8 +35,25 @@ export function startEntry(client, bootBoard) {
           realtimeBoardView = reconcileBoardView(realtimeBoardView, snapshot);
           window.aureRelicsApplyRealtimeSnapshot?.(realtimeBoardView);
         },
+        onStatus: status => {
+          if (status === 'denied') {
+            realtimeBoardView = null;
+            window.aureRelicsApplyRealtimeSnapshot?.(null);
+          }
+        },
       });
-      unwireRealtimeActions = wireRealtimeBoardActions(realtimeEngine, () => realtimeSessionId, () => realtimeBoardView);
+      unwireRealtimeActions = wireRealtimeBoardActions(realtimeEngine, () => realtimeSessionId, () => realtimeBoardView, document, result => {
+        let message = document.getElementById('realtimeMutationNotice');
+        if (!message) {
+          message = document.createElement('p');
+          message.id = 'realtimeMutationNotice';
+          message.setAttribute('role', 'status');
+          board.appendChild(message);
+        }
+        message.textContent = result.ok ? '' : result.conflict
+          ? 'The session changed. Review the current state and try again.'
+          : 'The change could not be saved. Check your access or connection and try again.';
+      });
     }
     return realtimeLifecycle;
   }
@@ -45,6 +62,7 @@ export function startEntry(client, bootBoard) {
     realtimeSessionId = null;
     realtimeBoardView = null;
     window.aureRelicsApplyRealtimeSnapshot?.(null);
+    document.getElementById('realtimeMutationNotice')?.remove();
   }
   function startRealtimeBoard(sessionId) {
     if (realtimeSessionId === sessionId) return; // already active for this session
@@ -281,8 +299,10 @@ export function startEntry(client, bootBoard) {
   }).data.subscription;
   const hashChanged = () => { void load(); };
   window.addEventListener('hashchange', hashChanged);
-  window.addEventListener('pagehide', () => { clearTimeout(timer); clearCharacters(); stopRealtimeBoard(); });
-  window.addEventListener('pageshow', event => { if (event.persisted) void load(); });
+  const pageHidden = () => { ++epoch; clearTimeout(timer); clearCharacters(); stopRealtimeBoard(); };
+  const pageShown = event => { if (!destroyed && event.persisted) void load(); };
+  window.addEventListener('pagehide', pageHidden);
+  window.addEventListener('pageshow', pageShown);
   void load();
-  return () => { destroyed = true; ++epoch; clearCharacters(); stopRealtimeBoard(); unwireRealtimeActions?.(); clearTimeout(timer); subscription.unsubscribe(); window.removeEventListener('hashchange', hashChanged); back.remove(); };
+  return () => { destroyed = true; ++epoch; clearCharacters(); stopRealtimeBoard(); unwireRealtimeActions?.(); clearTimeout(timer); subscription.unsubscribe(); window.removeEventListener('hashchange', hashChanged); window.removeEventListener('pagehide', pageHidden); window.removeEventListener('pageshow', pageShown); back.remove(); };
 }

@@ -1,5 +1,10 @@
 # Issue #8B verification — client synchronization engine
 
+Historical stage report. The integrated readiness, reconnect and denial behavior
+and fresh acceptance results are recorded in [Issue 8E](issue-08e-final-review.md).
+In particular, late invalidations cannot recover a denied session; explicit
+re-entry is required. Earlier descriptions below are not the final contract.
+
 Branch: `v09-08b-client-sync`, based on `origin/main` at `af54f0c`.
 
 **2026-09-24 update (Issue #8B.1):** aligned to the now-implemented Issue #8A backend contract

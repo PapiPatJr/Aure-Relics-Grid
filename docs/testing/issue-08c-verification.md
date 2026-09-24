@@ -1,5 +1,10 @@
 # Issue #8C verification — production realtime adapter + board integration
 
+Historical stage report. See [Issue 8E](issue-08e-final-review.md) for final
+integrated behavior and fresh acceptance. Its fixes supersede the old limitations
+below: hydrate `42501` is denied, free-text errors alone are not denials, the board
+clears on denial, and consumer `synced` requires post-readiness hydration.
+
 Branch: `v09-08c-board-integration`; base: `ad73746` (merge of Issue 8A `9ac8387` + Issue 8B.1
 `576b9a1` onto `main` `af54f0c`). Plan: `docs/superpowers/plans/2026-09-24-issue-08c-realtime-integration.md`.
 

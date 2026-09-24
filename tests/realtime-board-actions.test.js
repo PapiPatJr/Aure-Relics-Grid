@@ -158,3 +158,19 @@ test('a stale expectedRevision conflict re-hydrates via the engine, exactly as m
   assert.equal(engine.mutateCalls.length, 1);
   assert.equal(engine.hydrateCalls.length, 1);
 });
+
+test('board action surfaces a conflict without replaying the command', async () => {
+  const { dom, panel } = buildDom();
+  const engine = createFakeEngine();
+  engine.setMutateResult(async () => { throw { code: '40001' }; });
+  const results = [];
+  wireRealtimeBoardActions(engine, () => session, () => baseView(), panel, result => results.push(result));
+  const button = dom.window.document.createElement('button');
+  button.dataset.realtimeAction = 'advance-round';
+  panel.appendChild(button);
+  click(dom, button);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(results.length, 1);
+  assert.equal(results[0].conflict, true);
+  assert.equal(engine.mutateCalls.length, 1);
+});

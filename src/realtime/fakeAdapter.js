@@ -25,6 +25,7 @@ export function createFakeAdapter() {
     subscribe(sessionId, callbacks) {
       calls.subscribe.push(sessionId);
       subscribers.set(sessionId, callbacks);
+      callbacks.onStatus('synced'); // deterministic transport readiness, not authorization
       return () => { if (subscribers.get(sessionId) === callbacks) subscribers.delete(sessionId); };
     },
     async mutate(sessionId, command) {

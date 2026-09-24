@@ -155,6 +155,11 @@ test('a revoked player loses hydrated state and cannot restore access without re
     has: room.dm.page.getByRole('heading', { name: 'Player B', exact: true }),
   });
   await row.getByRole('button', { name: 'Remove', exact: true }).click();
+  // Revoked players move into the collapsed Removed requests section. Waiting there
+  // proves the review RPC committed and the DM roster refreshed before hydration.
+  await expect(room.dm.page.locator('#roster details')).toContainText('Player B');
+  await expect(room.dm.page.locator('#roster details')).toContainText('revoked');
+  actors.expectHttp(room.playerB, '/rest/v1/rpc/get_session_snapshot', 403);
   await forceLifecycleHydrate(room.playerB, runtime);
   await waitForLifecycleStatus(room.playerB, runtime, 'denied');
   const denied = await lifecycleState(room.playerB, runtime);

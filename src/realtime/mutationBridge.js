@@ -45,12 +45,15 @@ export function createMutationBridge(engine) {
  * @returns {Promise<{ ok: true, result: unknown } | { ok: false, conflict: boolean, error: unknown }>}
  */
 export async function mutateWithConflictRecovery(engine, sessionId, mutateFn) {
+  const context = engine.getContext?.();
   try {
     const result = await mutateFn();
     return { ok: true, result };
   } catch (error) {
     if (isRevisionConflict(error) || error?.code === '40P01') {
-      await engine.hydrate(sessionId).catch(() => { /* already reported via the engine's own onStatus/onError */ });
+      if (context === engine.getContext?.()) {
+        await engine.hydrate(sessionId).catch(() => { /* already reported via the engine's own onStatus/onError */ });
+      }
       return { ok: false, conflict: true, error };
     }
     return { ok: false, conflict: false, error };

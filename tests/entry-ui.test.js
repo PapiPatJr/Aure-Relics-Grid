@@ -247,6 +247,19 @@ test('an approved player opening the play route sees the player panel populated 
   assert.ok(panel.querySelector('[data-token-id="t1"]'));
 });
 
+test('the play route keeps #onlineEntry visible and clears stale Campaign Hall markup so the player panel is actually visible', async t => {
+  const app = fixture(t, '#join', guest); await settle();
+  app.status('approved');
+  navigate(`play/${session}`); await settle();
+  const onlineEntry = document.getElementById('onlineEntry');
+  const panel = document.querySelector('#playerBoardPanel');
+  assert.ok(panel);
+  assert.equal(onlineEntry.hidden, false, '#onlineEntry must not be hidden while the Player Screen is mounted inside it');
+  assert.equal(panel.closest('[hidden]'), null, '#playerBoardPanel must not have any hidden ancestor');
+  assert.equal(document.querySelector('.entry-nav'), null, 'stale Campaign Hall shell markup must not remain alongside the player panel');
+  assert.equal(document.getElementById('legacyBoard').hidden, true);
+});
+
 test('a pending player hitting the play route is redirected to lobby and never mounts the player panel', async t => {
   const app = fixture(t, '#join', guest); await settle();
   navigate(`play/${session}`); await settle();

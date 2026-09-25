@@ -190,7 +190,10 @@ export function startEntry(client, bootBoard) {
         if (stamp !== epoch) return;
         if (lobby?.status !== 'approved') { go(`lobby/${id}`); return; }
         activeSession = { id };
-        root.hidden = true; back.hidden = false;
+        // Player Screen mounts inside root (#onlineEntry) — root must stay visible, but the
+        // Campaign Hall shell markup shell() left there (nav/loading text/footer) must not
+        // linger behind or alongside the panel mountPlayerScreen is about to append.
+        root.innerHTML = ''; back.hidden = false;
         document.body.classList.remove('entry-active');
         renderTarget = 'player';
         startRealtimeBoard(id);

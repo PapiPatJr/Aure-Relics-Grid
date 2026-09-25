@@ -60,6 +60,41 @@ test('render(null) hides and clears the panel', () => {
   assert.equal(panel.children.length, 0);
 });
 
+// --- Post-review corrective pass: if this route is ever reached with a manager-shaped view
+// (authority.canManage: true — e.g. a DM navigating directly to play/<sessionId>), it must render
+// exactly as read-only and publicly-filtered as the DM preview does, never interactively. A real
+// player-shaped view (authority.canManage: false) must remain fully interactive. ---
+
+test('a manager-shaped view (adversarial ownCharacterId) renders zero adjust-own-hp controls — read-only, same as the DM preview', () => {
+  const { root } = makeRoot();
+  const screen = mountPlayerScreen(root);
+  screen.render(dmShapedView({
+    authority: { canManage: true, ownCharacterId: 'c1' },
+    tokens: [{ id: 't1', kind: 'player', label: 'P1', isVisible: true, publicVisible: true }],
+    characters: [{ id: 'c1', name: 'Aria', playerName: 'Pat', hp: 9, maxHp: 12, ac: 15, statuses: [], publicVisible: true }],
+  }));
+  const panel = root.querySelector('#playerBoardPanel');
+  assert.equal(panel.querySelectorAll('[data-realtime-action]').length, 0);
+});
+
+test('a real player-shaped view (authority.canManage: false) with a matching ownCharacterId renders interactively (own-character HP controls work)', () => {
+  const { root } = makeRoot();
+  const screen = mountPlayerScreen(root);
+  screen.render({
+    sessionId: 'session-1',
+    revision: '1',
+    session: { id: 'session-1', name: 'Session', status: 'active', activeLevelId: null },
+    roundNumber: 2,
+    authority: { canManage: false, ownCharacterId: 'c1' },
+    tokens: [{ id: 't1', kind: 'player', label: 'P1', isVisible: true }],
+    characters: [{ id: 'c1', name: 'Aria', playerName: 'Pat', hp: 9, maxHp: 12, ac: 15, statuses: [] }],
+    initiative: [],
+    dm: null,
+  });
+  const panel = root.querySelector('#playerBoardPanel');
+  assert.ok(panel.querySelector('[data-character-id="c1"] [data-realtime-action="adjust-own-hp"]'));
+});
+
 test('dispose() removes the panel, is idempotent, and render() after dispose() is a no-op', () => {
   const { root } = makeRoot();
   const screen = mountPlayerScreen(root);

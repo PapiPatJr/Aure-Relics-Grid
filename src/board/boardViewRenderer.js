@@ -10,6 +10,18 @@
  * script.js's own renderer) is what lets a DM's "preview as player" mode hide these controls
  * without touching authority at all.
  *
+ * `options.interactionMode` ('interactive', the default, or 'readOnly') is a second, independent
+ * gate, added by the post-review corrective pass: independent review found that own-character HP
+ * controls rendered whenever `authority.ownCharacterId` matched a character, regardless of
+ * presentationMode — so a DM's manager-shaped preview view (which legitimately has
+ * `authority.canManage: true` and, adversarially, could carry any `ownCharacterId`) was never
+ * structurally guaranteed to be free of actionable `[data-realtime-action]` controls. With
+ * `interactionMode: 'readOnly'`, this function renders ZERO `[data-realtime-action]` elements of
+ * any kind — no manage controls, no own-character HP controls — no matter what `authority`
+ * contains. `authority` itself is never read for this decision beyond the existing
+ * presentationMode/canManage gate; `interactionMode` is a rendering-only concern, never a change
+ * to authority.
+ *
  * Elements are created via container.ownerDocument (never the bare global `document`) so this
  * module works against any document a caller's container belongs to, including a detached jsdom
  * document in tests.
@@ -59,7 +71,7 @@ function renderTokenRow(doc, token, canManageHere) {
   return row;
 }
 
-function renderCharacterCard(doc, character, authority) {
+function renderCharacterCard(doc, character, authority, readOnly) {
   const card = doc.createElement('li');
   card.className = 'realtime-character-card';
   card.dataset.characterId = character.id;
@@ -79,7 +91,7 @@ function renderCharacterCard(doc, character, authority) {
     card.appendChild(statuses);
   }
 
-  if (authority?.ownCharacterId && authority.ownCharacterId === character.id) {
+  if (!readOnly && authority?.ownCharacterId && authority.ownCharacterId === character.id) {
     const hpControls = doc.createElement('div');
     hpControls.className = 'realtime-character-hp-controls';
     hpControls.append(
@@ -106,11 +118,12 @@ function renderInitiativeRow(doc, entry) {
  * @param {HTMLElement} container Caller-owned. Only ever sets container.hidden and replaces its children.
  * @param {import('../realtime/boardBridge.js').BoardView|null} displayView Already the output of
  *   deriveDisplayView — this function does not call deriveDisplayView itself.
- * @param {{ presentationMode: 'dm'|'player' }} options
+ * @param {{ presentationMode: 'dm'|'player', interactionMode?: 'interactive'|'readOnly' }} options
  */
 export function renderBoardView(container, displayView, options) {
-  const { presentationMode } = options;
+  const { presentationMode, interactionMode = 'interactive' } = options;
   const doc = container.ownerDocument;
+  const readOnly = interactionMode === 'readOnly';
 
   if (displayView == null) {
     container.hidden = true;
@@ -122,7 +135,7 @@ export function renderBoardView(container, displayView, options) {
   container.innerHTML = '';
 
   const { roundNumber, tokens, characters, initiative, authority, dm } = displayView;
-  const canManageHere = presentationMode === 'dm' && Boolean(authority?.canManage);
+  const canManageHere = !readOnly && presentationMode === 'dm' && Boolean(authority?.canManage);
 
   const heading = doc.createElement('h3');
   heading.textContent = `Online session — Round ${roundNumber ?? '—'}`;
@@ -139,7 +152,7 @@ export function renderBoardView(container, displayView, options) {
 
   const characterList = doc.createElement('ul');
   characterList.className = 'realtime-character-list';
-  (characters || []).forEach(character => characterList.appendChild(renderCharacterCard(doc, character, authority)));
+  (characters || []).forEach(character => characterList.appendChild(renderCharacterCard(doc, character, authority, readOnly)));
   container.appendChild(characterList);
 
   if (canManageHere) {
@@ -151,7 +164,7 @@ export function renderBoardView(container, displayView, options) {
   (initiative || []).forEach(entry => initiativeList.appendChild(renderInitiativeRow(doc, entry)));
   container.appendChild(initiativeList);
 
-  if (presentationMode === 'dm' && dm) {
+  if (!readOnly && presentationMode === 'dm' && dm) {
     const dmSection = doc.createElement('section');
     dmSection.className = 'realtime-dm-section';
     dmSection.setAttribute('aria-label', 'DM-only projection');

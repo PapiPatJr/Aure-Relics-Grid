@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { wireRealtimeBoardActions } from '../src/realtime/boardActions.js';
 
 const SOURCE_PATH = 'src/screens/dm-screen.js';
 const FORBIDDEN = ['realtime/engine', 'supabaseAdapter', 'sessionLifecycle', 'getSupabaseClient'];
@@ -13,9 +14,12 @@ function dmShapedView(overrides = {}) {
     session: { id: 'session-1', name: 'Session', status: 'active', activeLevelId: null },
     roundNumber: 2,
     authority: { canManage: true, ownCharacterId: null },
-    tokens: [{ id: 't1', kind: 'player', label: 'P1', isVisible: true }],
-    characters: [{ id: 'c1', name: 'Aria', playerName: 'Pat', hp: 9, maxHp: 12, ac: 15, statuses: [] }],
-    initiative: [{ id: 'i1', tokenId: 't1', initiative: 15, position: 0, isActive: true }],
+    // publicVisible: true so this fixture's default entities survive deriveDisplayView's
+    // manager-view filtering (post-review architecture amendment) and existing assertions below
+    // that expect them present in the preview keep working unchanged.
+    tokens: [{ id: 't1', kind: 'player', label: 'P1', isVisible: true, publicVisible: true }],
+    characters: [{ id: 'c1', name: 'Aria', playerName: 'Pat', hp: 9, maxHp: 12, ac: 15, statuses: [], publicVisible: true }],
+    initiative: [{ id: 'i1', tokenId: 't1', initiative: 15, position: 0, isActive: true, publicVisible: true }],
     dm: { tokenDetails: [], notes: [], activity: [] },
     ...overrides,
   };
@@ -263,6 +267,86 @@ test('regression: toggling before any render(view) call is safe — no crash, no
 
   assert.doesNotThrow(() => screen.setPresentationMode('dm'));
   assert.equal(apply.calls.length, 0);
+});
+
+// --- Post-review corrective pass: the preview is a GENERIC PUBLIC projection, not an
+// approximate/impersonated one, and must be structurally read-only regardless of what the
+// (adversarial) input view's authority contains. ---
+
+test('preview panel removes hidden/non-public entities using backend publicVisible metadata, keeping only the public ones', async t => {
+  const { dom, container } = withDom(t);
+  const { createDmScreen } = await import('../src/screens/dm-screen.js');
+  const screen = createDmScreen({ apply: spy(), container });
+  screen.activate();
+
+  const view = dmShapedView({
+    tokens: [
+      { id: 'public-token', kind: 'enemy', label: 'Goblin', isVisible: true, publicVisible: true },
+      { id: 'hidden-token', kind: 'boss', label: 'Secret Boss', isVisible: false, publicVisible: false },
+    ],
+    characters: [
+      { id: 'public-character', name: 'Aria', approved: true, publicVisible: true },
+      { id: 'non-public-character', name: 'Pending Hero', approved: false, publicVisible: false },
+    ],
+    initiative: [
+      { id: 'i-public', tokenId: 'public-token', initiative: 15, position: 0, isActive: true, publicVisible: true },
+      { id: 'i-hidden', tokenId: 'hidden-token', initiative: 20, position: 1, isActive: false, publicVisible: false },
+    ],
+  });
+  screen.setPresentationMode('player');
+  screen.render(view);
+
+  const panel = dom.window.document.getElementById('dmPreviewPanel');
+  assert.ok(panel.querySelector('[data-token-id="public-token"]'));
+  assert.equal(panel.querySelector('[data-token-id="hidden-token"]'), null);
+  assert.ok(panel.querySelector('[data-character-id="public-character"]'));
+  assert.equal(panel.querySelector('[data-character-id="non-public-character"]'), null);
+  assert.equal(panel.querySelectorAll('.realtime-initiative-row').length, 1);
+});
+
+test('adversarial: preview panel renders zero [data-realtime-action] elements of any kind even when the manager view has authority.canManage: true and ownCharacterId matching a public character', async t => {
+  const { dom, container } = withDom(t);
+  const { createDmScreen } = await import('../src/screens/dm-screen.js');
+  const screen = createDmScreen({ apply: spy(), container });
+  screen.activate();
+
+  const view = dmShapedView({
+    authority: { canManage: true, ownCharacterId: 'c1' },
+  });
+  screen.setPresentationMode('player');
+  screen.render(view);
+
+  const panel = dom.window.document.getElementById('dmPreviewPanel');
+  assert.equal(panel.querySelectorAll('[data-realtime-action]').length, 0);
+  assert.equal(panel.querySelectorAll('[data-realtime-action="adjust-own-hp"]').length, 0);
+});
+
+test('integrated mutation-boundary: clicking anywhere in the DM preview panel cannot reach engine.mutate, given an adversarial manager view', async t => {
+  const { dom, container } = withDom(t);
+  const { createDmScreen } = await import('../src/screens/dm-screen.js');
+  const screen = createDmScreen({ apply: spy(), container });
+  screen.activate();
+
+  const view = dmShapedView({
+    authority: { canManage: true, ownCharacterId: 'c1' },
+  });
+  screen.setPresentationMode('player');
+  screen.render(view);
+
+  const panel = dom.window.document.getElementById('dmPreviewPanel');
+  assert.ok(panel.children.length > 0, 'sanity: the preview panel actually rendered content to click on');
+
+  const mutateCalls = [];
+  const fakeEngine = { mutate: (...args) => { mutateCalls.push(args); throw new Error('mutate must never be called from a read-only preview'); }, getContext: () => 1 };
+  const unwire = wireRealtimeBoardActions(fakeEngine, () => view.sessionId, () => view, dom.window.document, () => {});
+  t.after(unwire);
+
+  const clickable = [panel, ...panel.querySelectorAll('*')];
+  for (const el of clickable) {
+    el.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  }
+
+  assert.equal(mutateCalls.length, 0, 'no element in the DM preview panel is an actionable [data-realtime-action] control');
 });
 
 test('regression: toggling immediately after render(null) (denied state) is safe and never fabricates content', async t => {

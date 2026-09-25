@@ -91,6 +91,37 @@ test('own-character HP controls render only for the character matching authority
   }
 });
 
+// --- Post-review corrective pass: interactionMode: 'readOnly' must produce zero
+// [data-realtime-action] elements of any kind, even given an adversarial view where
+// authority.canManage is true and authority.ownCharacterId matches a rendered character. ---
+
+test('interactionMode: "readOnly" renders zero [data-realtime-action] elements of any kind, given an adversarial canManage:true + matching ownCharacterId view', () => {
+  const { container } = makeContainer();
+  const view = dmShapedView({
+    authority: { canManage: true, ownCharacterId: 'c1' },
+  });
+
+  renderBoardView(container, view, { presentationMode: 'player', interactionMode: 'readOnly' });
+
+  assert.equal(container.querySelectorAll('[data-realtime-action]').length, 0);
+  assert.equal(container.querySelectorAll('[data-realtime-action="adjust-own-hp"]').length, 0);
+  assert.equal(container.querySelector('.realtime-dm-section'), null);
+});
+
+test('interactionMode: "readOnly" still renders tokens/characters/initiative content (read-only, not empty)', () => {
+  const { container } = makeContainer();
+  renderBoardView(container, playerShapedView(), { presentationMode: 'player', interactionMode: 'readOnly' });
+  assert.ok(container.querySelector('[data-token-id="t1"]'));
+  assert.ok(container.querySelector('[data-character-id="c1"]'));
+  assert.ok(container.querySelector('.realtime-initiative-row'));
+});
+
+test('interactionMode defaults to "interactive" when omitted (own-character HP controls still render for a real player view)', () => {
+  const { container } = makeContainer();
+  renderBoardView(container, playerShapedView({ authority: { canManage: false, ownCharacterId: 'c1' } }), { presentationMode: 'player' });
+  assert.ok(container.querySelector('[data-character-id="c1"] [data-realtime-action="adjust-own-hp"]'));
+});
+
 test('re-rendering with a new view fully replaces prior DOM, no stale nodes survive', () => {
   const { container } = makeContainer();
   renderBoardView(container, playerShapedView({ tokens: [{ id: 'first-only', kind: 'player', label: 'First', isVisible: true }] }), { presentationMode: 'player' });

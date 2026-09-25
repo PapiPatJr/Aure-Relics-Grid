@@ -56,7 +56,11 @@ export function createDmScreen({ apply, container }) {
       previewPanel.hidden = true;
       document.body.appendChild(previewPanel);
     }
-    renderBoardView(previewPanel, deriveDisplayView(lastView, 'player'), { presentationMode: 'player' });
+    // Structurally read-only (post-review corrective pass): the preview must never render an
+    // actionable [data-realtime-action] control, even given an adversarial lastView where
+    // authority.canManage is true and authority.ownCharacterId matches a character — authority
+    // itself is never touched here, only the rendering-only interactionMode gate.
+    renderBoardView(previewPanel, deriveDisplayView(lastView, 'player'), { presentationMode: 'player', interactionMode: 'readOnly' });
   }
 
   function setPresentationMode(mode) {

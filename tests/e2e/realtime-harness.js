@@ -179,3 +179,31 @@ export async function closeInvalidationObserver(actor, subscription) {
     observers.delete(subscriptionKey);
   }, subscription);
 }
+
+export async function openPlayerScreen(actor, sessionId) {
+  await actor.page.goto(`/#play/${sessionId}`);
+  await expect(actor.page.locator('#playerBoardPanel')).toBeVisible();
+}
+
+export async function expectNoDmProjection(actor, panelSelector = '#playerBoardPanel') {
+  await expect(actor.page.locator(`${panelSelector} .realtime-dm-section`)).toHaveCount(0);
+  await expect(actor.page.locator(
+    `${panelSelector} [data-realtime-action="advance-round"], ` +
+    `${panelSelector} [data-realtime-action="toggle-token-visible"], ` +
+    `${panelSelector} [data-realtime-action="clear-initiative"]`
+  )).toHaveCount(0);
+}
+
+export async function togglePresentationMode(actor) {
+  const wasVisible = await actor.page.locator('#dmPreviewPanel').isVisible().catch(() => false);
+  await actor.page.locator('.dm-presentation-toggle').click();
+  if (wasVisible) await expect(actor.page.locator('#dmPreviewPanel')).toBeHidden();
+  else await expect(actor.page.locator('#dmPreviewPanel')).toBeVisible();
+}
+
+export async function channelCount(actor) {
+  return actor.page.evaluate(async () => {
+    const { getSupabaseClient } = await import('/src/supabase/client.js');
+    return getSupabaseClient().getChannels().length;
+  });
+}

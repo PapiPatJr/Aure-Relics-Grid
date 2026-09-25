@@ -84,6 +84,14 @@ function fixture(t, hash = '#login', initialUser = null, boot = async () => {}) 
   };
 }
 
+// Issue #9 Task 2: the `play/<sessionId>` route has no in-app button, so tests reach it the
+// same way a bookmarked/shared link would — a direct hash change, mirroring go()'s own
+// history.replaceState + load() without going through a data-action click.
+function navigate(hash) {
+  history.replaceState(null, '', `#${hash}`);
+  window.dispatchEvent(new Event('hashchange'));
+}
+
 test('board clears its synchronized projection on transport or snapshot denial', async t => {
   const app = fixture(t, `#board/${session}`, dm);
   const rendered = [];
@@ -222,4 +230,104 @@ test('registered participant may use an approved player lobby without initializi
   assert.match(document.querySelector('#lobbyState')?.textContent || '', /Welcome to the party/);
   assert.equal(app.boots(), 0);
   assert.ok(app.calls.some(c => c.name === 'get_character_panel'));
+});
+
+test('an approved player opening the play route sees the player panel populated from a live snapshot', async t => {
+  const app = fixture(t, '#join', guest); await settle();
+  app.status('approved');
+  const originalRpc = app.client.rpc;
+  app.client.rpc = (name, args) => name === 'get_session_snapshot'
+    ? Promise.resolve({ data: { schemaVersion: 1, sessionId: args.p_session, campaignId: campaign, revision: '0', authority: { canManage: false, ownCharacterId: null }, session: { id: args.p_session, name: 'First gathering', status: 'active', activeLevelId: null }, roundNumber: 3, tokens: [{ id: 't1', kind: 'player', label: 'Aria', isVisible: true }], characters: [], initiative: [], dm: null } })
+    : originalRpc(name, args);
+  navigate(`play/${session}`); await settle();
+  const panel = document.querySelector('#playerBoardPanel');
+  assert.ok(panel);
+  assert.equal(panel.hidden, false);
+  assert.match(panel.innerHTML, /Round 3/);
+  assert.ok(panel.querySelector('[data-token-id="t1"]'));
+});
+
+test('the play route keeps #onlineEntry visible and clears stale Campaign Hall markup so the player panel is actually visible', async t => {
+  const app = fixture(t, '#join', guest); await settle();
+  app.status('approved');
+  navigate(`play/${session}`); await settle();
+  const onlineEntry = document.getElementById('onlineEntry');
+  const panel = document.querySelector('#playerBoardPanel');
+  assert.ok(panel);
+  assert.equal(onlineEntry.hidden, false, '#onlineEntry must not be hidden while the Player Screen is mounted inside it');
+  assert.equal(panel.closest('[hidden]'), null, '#playerBoardPanel must not have any hidden ancestor');
+  assert.equal(document.querySelector('.entry-nav'), null, 'stale Campaign Hall shell markup must not remain alongside the player panel');
+  assert.equal(document.getElementById('legacyBoard').hidden, true);
+});
+
+test('a pending player hitting the play route is redirected to lobby and never mounts the player panel', async t => {
+  const app = fixture(t, '#join', guest); await settle();
+  navigate(`play/${session}`); await settle();
+  assert.equal(location.hash, `#lobby/${session}`);
+  assert.equal(document.querySelector('#playerBoardPanel'), null);
+  assert.equal(app.boots(), 0);
+});
+
+test('a revoked player hitting the play route is redirected to lobby and never mounts the player panel', async t => {
+  const app = fixture(t, '#join', guest); await settle();
+  app.status('revoked');
+  navigate(`play/${session}`); await settle();
+  assert.equal(location.hash, `#lobby/${session}`);
+  assert.equal(document.querySelector('#playerBoardPanel'), null);
+});
+
+test('a player with no lobby record hitting the play route is redirected to lobby and never mounts the player panel', async t => {
+  const app = fixture(t, '#join', guest); await settle();
+  const originalRpc = app.client.rpc;
+  app.client.rpc = (name, args) => name === 'get_guest_lobby' ? Promise.resolve({ data: null }) : originalRpc(name, args);
+  navigate(`play/${session}`); await settle();
+  assert.equal(location.hash, `#lobby/${session}`);
+  assert.equal(document.querySelector('#playerBoardPanel'), null);
+});
+
+test('entering the play route never boots the legacy board or reveals #legacyBoard', async t => {
+  const app = fixture(t, '#join', guest); await settle();
+  app.status('approved');
+  const bootsBefore = app.boots();
+  navigate(`play/${session}`); await settle();
+  assert.equal(app.boots(), bootsBefore);
+  assert.equal(document.querySelector('#legacyBoard').hidden, true);
+  assert.ok(document.querySelector('#playerBoardPanel'));
+});
+
+test('leaving the play route disposes the player panel and tears down the realtime subscription', async t => {
+  const app = fixture(t, '#join', guest); await settle();
+  app.status('approved');
+  navigate(`play/${session}`); await settle();
+  assert.equal(app.channelCalls.length, 1);
+  assert.equal(app.removedChannels.length, 0);
+  assert.ok(document.querySelector('#playerBoardPanel'));
+  navigate('join'); await settle();
+  assert.equal(app.removedChannels.length, 1);
+  assert.equal(app.removedChannels[0], app.channelCalls[0]);
+  assert.equal(document.querySelector('#playerBoardPanel'), null);
+});
+
+test('a stale-approved player whose backend later denies access loses board content with none surviving', async t => {
+  const app = fixture(t, '#join', guest); await settle();
+  app.status('approved');
+  let snapshotCalls = 0;
+  const originalRpc = app.client.rpc;
+  app.client.rpc = (name, args) => {
+    if (name === 'get_session_snapshot') {
+      snapshotCalls++;
+      if (snapshotCalls === 1) {
+        return Promise.resolve({ data: { schemaVersion: 1, sessionId: args.p_session, campaignId: campaign, revision: '0', authority: { canManage: false, ownCharacterId: null }, session: { id: args.p_session, name: 'First gathering', status: 'active', activeLevelId: null }, roundNumber: 1, tokens: [], characters: [{ id: 'c1', name: 'STALE-CHARACTER', playerName: 'Pat', hp: 5, maxHp: 10, ac: 12, statuses: [] }], initiative: [], dm: null } });
+      }
+      return Promise.resolve({ data: null, error: { code: '42501' } });
+    }
+    return originalRpc(name, args);
+  };
+  navigate(`play/${session}`); await settle();
+  const panel = document.querySelector('#playerBoardPanel');
+  assert.match(panel.innerHTML, /STALE-CHARACTER/);
+  window.dispatchEvent(new Event('focus'));
+  await settle();
+  assert.equal(panel.hidden, true);
+  assert.doesNotMatch(panel.innerHTML, /STALE-CHARACTER/);
 });

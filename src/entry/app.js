@@ -5,6 +5,8 @@ import { createSupabaseSyncAdapter } from '../realtime/supabaseAdapter.js';
 import { createSessionLifecycle } from '../realtime/sessionLifecycle.js';
 import { reconcileBoardView } from '../realtime/boardBridge.js';
 import { wireRealtimeBoardActions } from '../realtime/boardActions.js';
+import { mountPlayerScreen } from '../screens/player-screen.js';
+import { createDmScreen } from '../screens/dm-screen.js';
 
 export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const e = escapeHtml;
@@ -27,18 +29,24 @@ export function startEntry(client, bootBoard) {
   // replacement for it. Lazily created once, then started/stopped as the board route is
   // entered/left — never active for any route other than the DM's own online session board.
   let realtimeEngine = null, realtimeLifecycle = null, realtimeBoardView = null, realtimeSessionId = null, unwireRealtimeActions = null;
+  let renderTarget = null, playerScreen = null;
+  function ensurePlayerScreen() { return playerScreen ??= mountPlayerScreen(root); }
+  function renderCurrent(view) {
+    if (renderTarget === 'player') ensurePlayerScreen().render(view);
+    else if (renderTarget === 'dm') dmScreen.render(view);
+  }
   function ensureRealtimeLifecycle() {
     if (!realtimeLifecycle) {
       realtimeEngine = createSyncEngine(createSupabaseSyncAdapter(client));
       realtimeLifecycle = createSessionLifecycle(realtimeEngine, {
         onSnapshot: snapshot => {
           realtimeBoardView = reconcileBoardView(realtimeBoardView, snapshot);
-          window.aureRelicsApplyRealtimeSnapshot?.(realtimeBoardView);
+          renderCurrent(realtimeBoardView);
         },
         onStatus: status => {
           if (status === 'denied') {
             realtimeBoardView = null;
-            window.aureRelicsApplyRealtimeSnapshot?.(null);
+            renderCurrent(null);
           }
         },
       });
@@ -59,9 +67,11 @@ export function startEntry(client, bootBoard) {
   }
   function stopRealtimeBoard() {
     realtimeLifecycle?.stop();
+    renderCurrent(null);
     realtimeSessionId = null;
     realtimeBoardView = null;
-    window.aureRelicsApplyRealtimeSnapshot?.(null);
+    playerScreen?.dispose(); playerScreen = null;
+    dmScreen.deactivate(); renderTarget = null;
     document.getElementById('realtimeMutationNotice')?.remove();
   }
   function startRealtimeBoard(sessionId) {
@@ -74,6 +84,7 @@ export function startEntry(client, bootBoard) {
   back.type = 'button'; back.className = 'entry-board-back'; back.textContent = 'Return to session'; back.hidden = true;
   document.querySelector('.app-header').append(back);
   back.addEventListener('click', () => go(activeSession ? `session/${activeSession.id}` : 'dm'));
+  const dmScreen = createDmScreen({ apply: view => window.aureRelicsApplyRealtimeSnapshot?.(view), container: document.querySelector('.app-header') });
 
   function notice(message, error = false) {
     const target = root.querySelector('#entryNotice');
@@ -161,6 +172,7 @@ export function startEntry(client, bootBoard) {
           document.body.classList.remove('entry-active');
           if (!boardStarted) { await bootBoard(); boardStarted = true; }
           if (stamp !== epoch) { concealBoard(); return; }
+          dmScreen.activate(); renderTarget = 'dm';
           startRealtimeBoard(session.id);
           window.dispatchEvent(new Event('resize'));
           return;
@@ -172,6 +184,20 @@ export function startEntry(client, bootBoard) {
         activeSession = { id };
         shell(title('PLAYER LOBBY', 'Your place in the story', 'Keep this browser open while your DM welcomes the party.') + '<section class="entry-panel entry-lobby"><div id="lobbyState" aria-live="polite"></div><div id="roster"></div><div class="entry-actions">' + button('refresh', 'Check status') + button('join', 'Use another code') + '</div></section>');
         await refresh(stamp); return;
+      }
+      if (page === 'play' && user) {
+        const lobby = await api.lobby(id);
+        if (stamp !== epoch) return;
+        if (lobby?.status !== 'approved') { go(`lobby/${id}`); return; }
+        activeSession = { id };
+        // Player Screen mounts inside root (#onlineEntry) — root must stay visible, but the
+        // Campaign Hall shell markup shell() left there (nav/loading text/footer) must not
+        // linger behind or alongside the panel mountPlayerScreen is about to append.
+        root.innerHTML = ''; back.hidden = false;
+        document.body.classList.remove('entry-active');
+        renderTarget = 'player';
+        startRealtimeBoard(id);
+        return;
       }
       go(isDm(user) ? 'dm' : 'join');
     } catch (error) {

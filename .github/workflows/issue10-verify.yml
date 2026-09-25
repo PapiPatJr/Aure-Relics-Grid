@@ -1,0 +1,52 @@
+name: Issue 10 Fog Verification
+
+on:
+  push:
+    branches:
+      - v09-10-fog-of-war
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue10-fog-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Start local Supabase
+        run: npx supabase start
+      - name: Reset database
+        run: npm run db:reset
+      - name: Run pgTAP
+        run: npm run test:db
+      - name: Database lint
+        run: npx supabase db lint --local --schema public,private --fail-on warning
+      - name: Security advisors
+        run: npx supabase db advisors --local --type security --level warn --fail-on error
+      - name: Stop local Supabase
+        if: always()
+        run: npx supabase stop --no-backup

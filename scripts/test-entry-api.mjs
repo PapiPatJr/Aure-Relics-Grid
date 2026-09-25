@@ -1,14 +1,9 @@
 // Local-only enrollment contract using real Auth sessions and PostgREST.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { localTestStack } from './local-test-stack.mjs';
 import { createClient } from '@supabase/supabase-js';
 
-assert.match(readFileSync('supabase/config.toml','utf8'), /project_id = "aure-relics-v09-foundation"/);
-const status = JSON.parse(execFileSync(process.execPath,
-  ['node_modules/supabase/dist/supabase.js','status','--output','json'],
-  {encoding:'utf8',windowsHide:true,stdio:['ignore','pipe','pipe']}));
-assert.equal(status.API_URL,'http://127.0.0.1:56321','Refuse another stack or hosted project');
+const status = localTestStack();
 const options={auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}};
 const makeClient=()=>createClient(status.API_URL,status.ANON_KEY,options);
 const admin=createClient(status.API_URL,status.SERVICE_ROLE_KEY,options);

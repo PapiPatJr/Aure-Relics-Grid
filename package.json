@@ -11,6 +11,8 @@
     "check": "node scripts/verify-vite-scaffold.mjs && node --test tests/*.test.js",
     "test:db": "supabase test db",
     "test:api": "node scripts/test-supabase-api.mjs && node scripts/test-entry-api.mjs && node scripts/test-characters-api.mjs",
+    "test:realtime-api": "node scripts/test-realtime-api.mjs",
+    "test:realtime-concurrency": "node scripts/test-realtime-concurrency.mjs",
     "test:characters-api": "node scripts/test-characters-api.mjs",
     "test:entry-api": "node scripts/test-entry-api.mjs",
     "test:e2e": "playwright test",

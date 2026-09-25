@@ -11,7 +11,7 @@ const code = `${campaign}.${session}.${'a'.repeat(64)}`;
 const delay = () => new Promise(resolve => setTimeout(resolve, 0));
 async function settle() { for (let i = 0; i < 8; i++) await delay(); }
 
-function fixture(t, hash = '#login', initialUser = null) {
+function fixture(t, hash = '#login', initialUser = null, boot = async () => {}) {
   const dom = new JSDOM('<header class="app-header"></header><main id="onlineEntry" hidden></main><div id="legacyBoard" hidden>Local board</div>', { url: `https://aure.example/${hash}` });
   const originals = new Map();
   for (const key of ['window', 'document', 'location', 'history', 'FormData', 'Event']) {
@@ -20,7 +20,7 @@ function fixture(t, hash = '#login', initialUser = null) {
   }
   let current = initialUser, authCallback, boots = 0, lobbyStatus = 'pending';
   let roster = [{ user_id: 'guest', display_name: '<img src=x onerror=alert(1)>', status: 'pending' }];
-  const calls = [];
+  const calls = [], channelCalls = [], removedChannels = [];
   const client = {
     auth: {
       getUser: async () => ({ data: { user: current } }),
@@ -48,10 +48,23 @@ function fixture(t, hash = '#login', initialUser = null) {
       if (name === 'get_guest_lobby') return { data: { status: lobbyStatus, campaign_name: 'Ember Court', session_name: 'First gathering' } };
       if (name === 'get_session_roster') return { data: roster };
       if (name === 'review_session_guest') roster = roster.map(row => ({ ...row, status: args.p_action === 'approve' ? 'approved' : 'revoked' }));
+      if (name === 'get_session_snapshot') {
+        return { data: { schemaVersion: 1, sessionId: args.p_session, campaignId: campaign, revision: '0', authority: { canManage: true, ownCharacterId: null }, session: { id: args.p_session, name: 'First gathering', status: 'active', activeLevelId: null }, roundNumber: 1, tokens: [], characters: [], initiative: [], dm: null } };
+      }
       return { data: null };
-    }
+    },
+    // Issue #8C: startEntry's board route additively starts a realtime session sync alongside
+    // the local board. A minimal fake channel keeps this fixture's synchronous subscribe() call
+    // from throwing; it never actually delivers an invalidation in these tests.
+    channel(topic) {
+      let statusCallback;
+      const fakeChannel = { topic, on: () => fakeChannel, subscribe: cb => { statusCallback = cb; cb?.('SUBSCRIBED'); return fakeChannel; }, emitStatus: (...args) => statusCallback?.(...args) };
+      channelCalls.push(fakeChannel);
+      return fakeChannel;
+    },
+    removeChannel(channel) { removedChannels.push(channel); },
   };
-  const stop = startEntry(client, async () => { boots++; });
+  const stop = startEntry(client, async () => { boots++; await boot(); });
   t.after(() => {
     stop(); dom.window.close();
     for (const [key, descriptor] of originals) {
@@ -59,7 +72,7 @@ function fixture(t, hash = '#login', initialUser = null) {
     }
   });
   return {
-    client, calls, document: dom.window.document, boots: () => boots,
+    client, calls, channelCalls, removedChannels, document: dom.window.document, boots: () => boots,
     click(action) { const el = document.querySelector(`[data-action="${action}"]`); assert.ok(el, `button ${action}`); el.click(); },
     submit(kind, values) {
       const form = document.querySelector(`[data-form="${kind}"]`); assert.ok(form);
@@ -70,6 +83,45 @@ function fixture(t, hash = '#login', initialUser = null) {
     externalLogout() { current = null; authCallback('SIGNED_OUT', null); }
   };
 }
+
+test('board clears its synchronized projection on transport or snapshot denial', async t => {
+  const app = fixture(t, `#board/${session}`, dm);
+  const rendered = [];
+  window.aureRelicsApplyRealtimeSnapshot = view => rendered.push(view);
+  await settle();
+  assert.ok(rendered.at(-1));
+  app.channelCalls.at(-1).emitStatus('CHANNEL_ERROR', { code: '42501' });
+  await settle();
+  assert.equal(rendered.at(-1), null);
+  assert.equal(app.removedChannels.length, 1);
+});
+
+test('board clears its synchronized projection on snapshot RPC 42501', async t => {
+  const app = fixture(t, `#board/${session}`, dm);
+  const rendered = [];
+  window.aureRelicsApplyRealtimeSnapshot = view => rendered.push(view);
+  await settle();
+  assert.ok(rendered.at(-1));
+  const originalRpc = app.client.rpc;
+  app.client.rpc = (name, args) => name === 'get_session_snapshot'
+    ? Promise.resolve({ data: null, error: { code: '42501' } }) : originalRpc(name, args);
+  window.dispatchEvent(new Event('focus'));
+  await settle();
+  assert.equal(rendered.at(-1), null);
+  assert.equal(app.removedChannels.length, 1);
+});
+
+test('pagehide invalidates board startup already awaiting its import', async t => {
+  let finishBoot;
+  const pending = new Promise(resolve => { finishBoot = resolve; });
+  const app = fixture(t, `#board/${session}`, dm, () => pending);
+  await settle();
+  assert.equal(app.boots(), 1);
+  window.dispatchEvent(new Event('pagehide'));
+  finishBoot();
+  await settle();
+  assert.equal(app.channelCalls.length, 0);
+});
 
 test('DM login, campaign creation, session hosting and approval render through the entry flow', async t => {
   const app = fixture(t); await settle();
@@ -91,6 +143,39 @@ test('DM login, campaign creation, session hosting and approval render through t
   app.externalLogout(); await settle();
   assert.equal(document.querySelector('#legacyBoard').hidden, true, 'cross-tab logout hides board immediately');
 });
+async function reachSessionBoard(t) {
+  const app = fixture(t); await settle();
+  app.submit('login', { email: 'dm@example.test', password: 'password123' }); await settle();
+  app.submit('campaign', { name: 'Ember Court' }); await settle();
+  app.submit('session', { name: 'First gathering' }); await settle();
+  app.click('board'); await settle();
+  return app;
+}
+
+test('leaving the board route tears down the realtime subscription (Issue #8C.1)', async t => {
+  const app = await reachSessionBoard(t);
+  assert.equal(app.channelCalls.length, 1);
+  assert.equal(app.removedChannels.length, 0);
+  document.querySelector('.entry-board-back').click(); await settle();
+  assert.equal(app.removedChannels.length, 1);
+  assert.equal(app.removedChannels[0], app.channelCalls[0]);
+});
+
+test('re-entering the board route starts a fresh realtime subscription (Issue #8C.1)', async t => {
+  const app = await reachSessionBoard(t);
+  document.querySelector('.entry-board-back').click(); await settle();
+  app.click('board'); await settle();
+  assert.equal(app.channelCalls.length, 2);
+  assert.equal(app.removedChannels.length, 1);
+});
+
+test('logout tears down the realtime subscription immediately (Issue #8C.1)', async t => {
+  const app = await reachSessionBoard(t);
+  assert.equal(app.channelCalls.length, 1);
+  app.click('logout'); await settle();
+  assert.ok(app.removedChannels.includes(app.channelCalls[0]));
+});
+
 test('registration without a session asks for email confirmation and does not enter dashboard', async t => {
   const app = fixture(t, '#register'); await settle();
   app.submit('register', { email: 'dm@example.test', password: 'password123' }); await settle();

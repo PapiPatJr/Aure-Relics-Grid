@@ -1,5 +1,11 @@
 # Aure Relics v0.9 Supabase foundation (issue #5)
 
+Issue #8A adds secure realtime invalidations and snapshot/mutation RPCs. See the
+[adapter contract](../docs/issue-08a-realtime-contract.md) and
+[isolated-stack verification guide](../docs/testing/issue-08a-verification.md).
+The original lightweight setup below excludes Realtime; the 8A socket tests require
+Realtime to be running. No raw board/private tables are published.
+
 This package defines the database and authorization contract. It does not connect
 the legacy board to Supabase or add login/join/campaign/fog/movement UI.
 

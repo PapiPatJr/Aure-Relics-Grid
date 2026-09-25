@@ -37,8 +37,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Start local Supabase
-        run: npx supabase start
+      - name: Start minimal local Supabase database stack
+        run: npx supabase start -x studio,imgproxy,edge-runtime,logflare,vector,supavisor,realtime
       - name: Reset database
         run: npm run db:reset
       - name: Run pgTAP

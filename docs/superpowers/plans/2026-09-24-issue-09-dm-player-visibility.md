@@ -269,6 +269,89 @@ npm.cmd run test:e2e                                                       # Tas
 3. `feat: add player screen and play/<sessionId> route` (Task 2)
 4. `test/docs: verify Issue 9 DM/player visibility` (Task 4)
 
+## Post-review architecture amendment (corrective pass, branch `v09-09-review-fixes`)
+
+Independent review of the original implementation (production tip `d5e89dd`, QA-verified in
+`docs/testing/issue-09-verification.md`) found two Important defects, both root-caused against the
+actual merged code before being treated as confirmed:
+
+1. **DM "Preview as Player" was not actually a safe player-facing projection.** `deriveDisplayView`
+   only ever nulled `view.dm` for `'player'` mode; every other field passed through unchanged. The
+   DM's own manager-shaped `BoardView` (from `get_session_snapshot` as the campaign owner)
+   legitimately contains hidden tokens, fog-hidden tokens, unapproved characters and initiative
+   entries tied to those hidden tokens — `private.session_projection`'s `manager or (...)`
+   conditions include all of that for a manager, by design, so the DM can manage it. Feeding that
+   same object into `boardViewRenderer.renderBoardView` with `presentationMode: 'player'` rendered
+   all of it, because the renderer only gates the *DM section* and *manage controls* on
+   presentationMode/authority — it was never told to filter the underlying arrays at all.
+2. **The preview was not structurally read-only.** `renderCharacterCard` rendered `adjust-own-hp`
+   whenever `authority.ownCharacterId` matched a character, with no presentationMode gate at all.
+   `wireRealtimeBoardActions` is bound on `document` (not scoped to a panel) and wires *any*
+   `[data-realtime-action]` element using the original authoritative `BoardView`. In practice a
+   DM's own `ownCharacterId` is normally `null`, so this was not a reachable production mutation —
+   but the invariant "the preview can never mutate" was not structurally enforced, only true by
+   incidental data shape.
+
+**Superseded constraint:** the original plan's "no Supabase migration... Issue #9 is a pure
+presentation/routing layer" (Global constraints, above) is explicitly superseded for this one,
+narrow reason: a client-side filter cannot faithfully reconstruct the backend's fog-visibility and
+campaign/session-approval predicates without duplicating (and risking drift from) logic that only
+`private.session_projection` can evaluate correctly. Approximating it client-side (e.g.
+`tokens.filter(t => t.isVisible)`) was considered and rejected — it cannot express fog-rect
+visibility or approval-chain membership at all, so it would either over- or under-hide entities.
+
+**Resolution:**
+
+- `supabase/migrations/20260925103000_session_projection_public_visibility.sql` extends
+  `private.session_projection` to stamp every token/character/initiative entry with an
+  authoritative `publicVisible` boolean, computed with the exact predicates the function already
+  used to decide whether a *non-manager* recipient may see that entity (token: session active +
+  `is_visible` + `private.sync_rect_visible`; character: approved + approved session-player +
+  approved campaign-member; initiative: its token's `publicVisible`). No predicate is duplicated
+  inconsistently — each is copied verbatim from the function's own existing WHERE clauses. A real
+  (non-manager) recipient's own array is unaffected in authorization shape: it already only ever
+  contained publicly-visible tokens/approved characters (plus their own character via the existing
+  own-character rule), so `publicVisible` is simply always `true` for every token they receive, and
+  may legitimately be `false` for their own not-yet-approved character while it still appears via
+  the unchanged own-character rule. The migration also force-refreshes every campaign's cached
+  `private.session_sync` projection/revision (mirroring how the predecessor migration bootstrapped
+  clocks before first publishing `session_events`), so the change-detection baseline is never left
+  referencing the pre-migration shape.
+- `src/board/displayView.js`'s `deriveDisplayView(view, 'player')` now branches on
+  `view.authority?.canManage`: a real player-shaped view (`canManage: false`) is untouched beyond
+  nulling `dm`, exactly as before — it is already the backend's authorized recipient projection.
+  A manager-shaped view (`canManage: true`) is additionally reduced to only the entries whose
+  `publicVisible` is `true` (tokens, characters, and initiative entries whose token survived), with
+  `authority` still passed through by the same reference and the input never mutated. This makes
+  the DM preview a **generic public player-facing projection**, not an impersonation of any one
+  player — it never sets or infers an `ownCharacterId`.
+- `src/board/boardViewRenderer.js` gained a second, independent `options.interactionMode`
+  (`'interactive'`, the default, or `'readOnly'`). In `'readOnly'` mode the renderer emits **zero**
+  `[data-realtime-action]` elements of any kind — manage controls and own-character HP controls
+  alike — regardless of what `authority` contains. `authority` itself is never read, mutated, or
+  re-derived for this decision; it is a rendering-only gate.
+- `src/screens/dm-screen.js`'s preview panel now renders with `interactionMode: 'readOnly'`. The
+  real Player Screen (`src/screens/player-screen.js`) renders `'interactive'` for a genuine
+  player-shaped view (so own-character HP controls keep working) and `'readOnly'` for the edge case
+  of a manager-shaped view reaching that route directly (e.g. a DM navigating straight to
+  `play/<sessionId>`) — the same generic-public-projection treatment applies regardless of entry
+  point.
+- Structural proof: `tests/dm-screen.test.js` adds an integrated mutation-boundary test that wires
+  the real, unmodified `wireRealtimeBoardActions` against the preview panel with an adversarial
+  `authority: { canManage: true, ownCharacterId: <a real character id> }` view and a stub
+  `engine.mutate` that throws if ever called, then dispatches click events on every element in the
+  panel — proving no click path can reach `engine.mutate`, not merely that today's data shape
+  happens not to trigger one.
+- E2E: `tests/e2e/visibility.spec.js` adds a case proving an unapproved (non-public) character is
+  absent from the preview while still visible in the DM's own management panel (achievable with the
+  existing submit-without-approve flow — no new UI needed) and a case proving the preview panel
+  contains zero `[data-realtime-action]` elements at all. A hidden-token/fog-blocked-token E2E case
+  was **not** added: this app has no production UI or RPC path that creates a `public.tokens` row
+  at all (unchanged scope carried over from Issue #8; adding one is out of scope for this
+  corrective pass and would be Issue #10 UI). That case is instead covered at the
+  backend/integration level by `supabase/tests/database/05_public_visibility.test.sql`, per this
+  plan's own allowance for exactly this situation.
+
 ## Acceptance criteria
 
 - An approved player can open `play/<sessionId>` and see live tokens, public character info, initiative, round number, and their own permitted character controls — with zero account required, matching how `lobby/<sessionId>` already works today.

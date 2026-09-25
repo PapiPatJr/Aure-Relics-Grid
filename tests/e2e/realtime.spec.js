@@ -60,8 +60,12 @@ function expectPlayerProjection(snapshot, character, hp) {
   expect(snapshot.dm).toBeNull();
   const card = snapshot.characters.find(item => item.id === character);
   expect(card).toMatchObject({ id: character, hp });
+  // publicVisible: added by the Issue #9 review-fix migration (session_projection_public_visibility)
+  // — authoritative metadata a manager-shaped preview uses to filter to the generic public
+  // projection; see docs/superpowers/plans/2026-09-24-issue-09-dm-player-visibility.md's
+  // "Post-review architecture amendment".
   expect(Object.keys(card).sort()).toEqual([
-    'ac', 'approved', 'hp', 'id', 'imagePath', 'maxHp', 'name', 'playerName', 'publicNotes', 'speed', 'statuses', 'tempHp', 'updatedAt',
+    'ac', 'approved', 'hp', 'id', 'imagePath', 'maxHp', 'name', 'playerName', 'publicNotes', 'publicVisible', 'speed', 'statuses', 'tempHp', 'updatedAt',
   ]);
   expect(JSON.stringify(snapshot)).not.toMatch(/code_hash|dm_notes|private_notes|actual_hp|secret/i);
 }

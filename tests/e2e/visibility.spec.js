@@ -79,6 +79,38 @@ test('DM Player View hides DM-only DOM', async ({ actors }) => {
   await expectNoDmProjection(room.dm, '#dmPreviewPanel');
 });
 
+// --- Post-review corrective pass: independent review found the DM preview rendered the DM's own
+// manager-shaped BoardView (which legitimately contains non-public characters and, structurally,
+// could contain own-character HP controls) through the player-facing renderer with only `dm`
+// nulled. These two cases prove, at the full-stack level, that the preview is now (a) filtered to
+// the backend-authoritative generic public projection and (b) structurally read-only. A hidden
+// token / fog-blocked token case is not exercisable here: this app currently has no production UI
+// or RPC path that creates a public.tokens row at all (unchanged scope carried over from Issue #8;
+// building one is out of scope for this corrective pass) — that case is covered instead by the
+// backend/integration pgTAP suite (supabase/tests/database/05_public_visibility.test.sql). ---
+
+test('DM Player View preview excludes an unapproved (non-public) character while the DM\'s own management view still shows it', async ({ actors }) => {
+  const room = await createMultiplayerSession(actors);
+  const characterName = 'Pending Preview Hero';
+  await room.playerA.page.getByLabel('Character name', { exact: true }).fill(characterName);
+  await room.playerA.page.getByLabel('Maximum HP', { exact: true }).fill('10');
+  await room.playerA.page.getByRole('button', { name: 'Submit character', exact: true }).click();
+  await expect(room.playerA.page.locator('[data-character-notice]')).toContainText('Character submitted');
+  // Deliberately left unapproved.
+  await openDmBoard(room);
+  await expect(room.dm.page.locator('#realtimeSessionPanel')).toContainText(characterName);
+  await togglePresentationMode(room.dm);
+  await expect(room.dm.page.locator('#dmPreviewPanel')).not.toContainText(characterName);
+});
+
+test('DM Player View preview renders zero actionable controls of any kind (structurally read-only)', async ({ actors }) => {
+  const room = await createMultiplayerSession(actors);
+  await submitAndApproveCharacter(room);
+  await openDmBoard(room);
+  await togglePresentationMode(room.dm);
+  await expect(room.dm.page.locator('#dmPreviewPanel [data-realtime-action]')).toHaveCount(0);
+});
+
 test('presentation toggle creates no snapshot, mutation, or channel activity', async ({ actors }) => {
   const room = await createMultiplayerSession(actors);
   await submitAndApproveCharacter(room);

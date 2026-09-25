@@ -22,6 +22,11 @@ export function createDmScreen({ apply, container }) {
   let presentationMode = 'dm';
   let toggleButton = null;
   let previewPanel = null;
+  // The most recently rendered, already-authorized BoardView. Presentation-only: switching modes
+  // never hydrates/subscribes/mutates — it just rerenders this same stored view under the new
+  // mode, which is why the toggle can take effect with zero network activity.
+  let lastView = null;
+  let hasRenderedView = false;
 
   function labelForMode(mode) {
     return mode === 'dm' ? 'Preview as player' : 'Return to DM view';
@@ -37,6 +42,23 @@ export function createDmScreen({ apply, container }) {
     previewPanel.innerHTML = '';
   }
 
+  function renderStoredView() {
+    if (presentationMode === 'dm') {
+      apply(lastView);
+      return;
+    }
+
+    apply(null);
+    if (!previewPanel) {
+      previewPanel = document.createElement('section');
+      previewPanel.id = 'dmPreviewPanel';
+      previewPanel.className = 'realtime-session-panel dm-preview-panel';
+      previewPanel.hidden = true;
+      document.body.appendChild(previewPanel);
+    }
+    renderBoardView(previewPanel, deriveDisplayView(lastView, 'player'), { presentationMode: 'player' });
+  }
+
   function setPresentationMode(mode) {
     if (mode !== 'dm' && mode !== 'player') {
       throw new Error(`Unknown presentationMode: ${mode}`);
@@ -45,6 +67,10 @@ export function createDmScreen({ apply, container }) {
     presentationMode = mode;
     updateButtonLabel();
     if (mode === 'dm') hideAndClearPreviewPanel();
+    // Rerender the last-known view immediately under the new mode — a presentation toggle must
+    // never wait for the next realtime snapshot, which may not arrive for a long time (or ever)
+    // if nothing else about the session changes.
+    if (hasRenderedView) renderStoredView();
   }
 
   return {
@@ -70,20 +96,9 @@ export function createDmScreen({ apply, container }) {
     },
 
     render(view) {
-      if (presentationMode === 'dm') {
-        apply(view);
-        return;
-      }
-
-      apply(null);
-      if (!previewPanel) {
-        previewPanel = document.createElement('section');
-        previewPanel.id = 'dmPreviewPanel';
-        previewPanel.className = 'realtime-session-panel dm-preview-panel';
-        previewPanel.hidden = true;
-        document.body.appendChild(previewPanel);
-      }
-      renderBoardView(previewPanel, deriveDisplayView(view, 'player'), { presentationMode: 'player' });
+      lastView = view;
+      hasRenderedView = true;
+      renderStoredView();
     },
 
     getPresentationMode() {

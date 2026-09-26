@@ -72,6 +72,42 @@ function release(window, canvas, cellSize, cell, { pointerId = 1 } = {}) {
   canvas.dispatchEvent(pointerEvent(window, 'pointerup', { ...clientPointFor(cellSize, ...cell), pointerId }));
 }
 
+function cellSetOf(cells) {
+  return new Set(cells.map(([x, y]) => `${x},${y}`));
+}
+
+function assertSameCellSet(actualCells, expectedSet, message) {
+  assert.deepEqual(cellSetOf(actualCells), expectedSet, message);
+}
+
+/**
+ * Independent oracle for "which grid cells does a continuous straight pointer path cross between
+ * two sampled cells". This exists specifically so the sparse-vs-dense traversal tests below cannot
+ * pass merely because they compare the production `gridLineCells` helper against itself (10E-FIX2:
+ * QA found the prior nontrivial-slope test did exactly that, and it could not have caught an
+ * incorrect traversal implementation as a result).
+ *
+ * It reimplements only the trivial, uncontroversial coordinate mapping every pointer handler in
+ * this codebase already uses — `floor(clientPixel / cellSize)` — and densely samples many points
+ * along the real client-space straight line between the two cells' centers, exactly as if the
+ * pointer had fired thousands of pointermove events along that route instead of one coalesced
+ * jump. It never calls `gridLineCells`, `addBrushAt`, or any other piece of the production
+ * interpolation, so it is a genuine independent ground truth, not a restatement of the code under
+ * test.
+ */
+function denseOracleCellSet(cellSize, x0, y0, x1, y1, samples = 4000) {
+  const start = clientPointFor(cellSize, x0, y0);
+  const end = clientPointFor(cellSize, x1, y1);
+  const cells = new Set();
+  for (let i = 0; i <= samples; i += 1) {
+    const t = i / samples;
+    const clientX = start.clientX + t * (end.clientX - start.clientX);
+    const clientY = start.clientY + t * (end.clientY - start.clientY);
+    cells.add(`${Math.floor(clientX / cellSize)},${Math.floor(clientY / cellSize)}`);
+  }
+  return cells;
+}
+
 // --- Structural guarantee: no player-renderer/editor crossover, no mutation-bridge coupling ---
 
 test('structural guarantee: fogEditor.js never references the player renderer or a mutation bridge', () => {
@@ -234,7 +270,12 @@ for (const size of [1, 2, 3, 5]) {
   });
 }
 
-// --- Sparse pointer sampling: grid-line interpolation between coalesced samples (10E-FIX defect 1) ---
+// --- Sparse pointer sampling: supercover grid traversal between coalesced samples ---
+// (10E-FIX defect 1, corrected in 10E-FIX2: independent re-verification found the prior
+// Bresenham-based interpolation could omit cells a truly continuous pointer path crosses, and
+// that the prior nontrivial-slope test used the production traversal function as its own
+// expected value, so it could not have caught that gap. Every arbitrary-slope assertion below is
+// checked against `denseOracleCellSet`, which never calls `gridLineCells`.)
 
 test('gridLineCells: horizontal path is every intervening cell in order', () => {
   assert.deepEqual(gridLineCells(1, 1, 5, 1), [[1, 1], [2, 1], [3, 1], [4, 1], [5, 1]]);
@@ -252,25 +293,31 @@ test('gridLineCells: a single point (no movement) is just that one cell', () => 
   assert.deepEqual(gridLineCells(3, 3, 3, 3), [[3, 3]]);
 });
 
-test('gridLineCells: reversing an axis-aligned or exact-diagonal path reverses order but not the set', () => {
-  // Bresenham's tie-breaking for an arbitrary (non-axis-aligned, non-45-degree) slope is not
-  // guaranteed to be symmetric under endpoint swap — see the "reverse-direction movement" stroke
-  // test below, which shows the two directions' cells still union into one continuous painted
-  // path either way. Horizontal, vertical, and exact-diagonal lines have no tie-breaking
-  // ambiguity at all, so those ARE exactly symmetric.
-  for (const [x0, y0, x1, y1] of [[1, 1, 5, 1], [1, 1, 1, 5], [0, 0, 4, 4]]) {
-    const forward = gridLineCells(x0, y0, x1, y1);
-    const backward = gridLineCells(x1, y1, x0, y0);
-    assert.deepEqual(sortCells(forward), sortCells(backward));
+test('gridLineCells: every step stays adjacent to the previous cell (path is always connected)', () => {
+  for (const [x0, y0, x1, y1] of [[2, 9, 17, 3], [0, 0, 4, 2], [8, 8, 2, 5], [1, 1, 8, 3]]) {
+    const path = gridLineCells(x0, y0, x1, y1);
+    for (let i = 1; i < path.length; i += 1) {
+      const [px, py] = path[i - 1];
+      const [x, y] = path[i];
+      assert.ok(Math.abs(x - px) <= 1 && Math.abs(y - py) <= 1, `[${x0},${y0}]->[${x1},${y1}] step ${i} [${px},${py}]->[${x},${y}] is not adjacent`);
+    }
   }
 });
 
-test('gridLineCells: every step in an arbitrary-slope path stays adjacent to the previous cell', () => {
-  const path = gridLineCells(2, 9, 17, 3);
-  for (let i = 1; i < path.length; i += 1) {
-    const [px, py] = path[i - 1];
-    const [x, y] = path[i];
-    assert.ok(Math.abs(x - px) <= 1 && Math.abs(y - py) <= 1, `step ${i} [${px},${py}]->[${x},${y}] is not adjacent`);
+test('gridLineCells: forward and backward traversal always produce the same cell set (property check)', () => {
+  // Unlike plain Bresenham, this supercover traversal's step decision at each point depends only
+  // on the magnitudes (nx, ny), never on direction — so reversing the endpoints always reverses
+  // the emitted order without ever changing the set of cells, for every slope, not only
+  // axis-aligned/45-degree ones.
+  const pairs = [
+    [1, 1, 5, 1], [1, 1, 1, 5], [0, 0, 4, 4], // axis-aligned / exact diagonal
+    [0, 0, 4, 2], [1, 1, 8, 3], [2, 1, 4, 9], [8, 8, 2, 5], [3, 7, 11, 2], // arbitrary slopes
+    [5, 5, 5, 5], // no movement
+  ];
+  for (const [x0, y0, x1, y1] of pairs) {
+    const forward = cellSetOf(gridLineCells(x0, y0, x1, y1));
+    const backward = cellSetOf(gridLineCells(x1, y1, x0, y0));
+    assert.deepEqual(forward, backward, `[${x0},${y0}] <-> [${x1},${y1}] must be symmetric`);
   }
 });
 
@@ -318,7 +365,9 @@ test('sparse diagonal pointer movement produces a continuous path', () => {
   assert.deepEqual(onStroke.calls[0].cells, [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4]]);
 });
 
-test('sparse movement with a nontrivial slope produces a continuous, deterministic path', () => {
+// --- Arbitrary-slope traversal, verified against the independent dense-sampling oracle ---
+
+test('(0,0) -> (4,2): sparse jump matches the independently sampled dense-path reference exactly', () => {
   const { window, frame, grid, cellSize } = buildBoard();
   const onStroke = strokesRecorder();
   const editor = createFogEditor({ frame, grid, onStroke });
@@ -329,7 +378,97 @@ test('sparse movement with a nontrivial slope produces a continuous, determinist
   drag(window, canvas, cellSize, [[0, 0], [4, 2]]);
   release(window, canvas, cellSize, [4, 2]);
 
-  assert.deepEqual(onStroke.calls[0].cells, gridLineCells(0, 0, 4, 2));
+  const expected = [[0, 0], [1, 0], [1, 1], [2, 1], [3, 1], [3, 2], [4, 2]];
+  assert.deepEqual(onStroke.calls[0].cells, expected, 'must match the independently expected cell set exactly, including [1,0] and [3,1]');
+  assertSameCellSet(onStroke.calls[0].cells, denseOracleCellSet(cellSize, 0, 0, 4, 2));
+});
+
+test('(4,2) -> (0,0): the reverse jump produces the exact same cell set as the forward direction', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[4, 2], [0, 0]]);
+  release(window, canvas, cellSize, [0, 0]);
+
+  const expected = [[0, 0], [1, 0], [1, 1], [2, 1], [3, 1], [3, 2], [4, 2]]; // same set as the forward test above
+  assert.deepEqual(onStroke.calls[0].cells, expected);
+  assertSameCellSet(onStroke.calls[0].cells, denseOracleCellSet(cellSize, 4, 2, 0, 0));
+});
+
+test('(1,1) -> (8,3): a shallow slope includes every cell the dense oracle crosses', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[1, 1], [8, 3]]);
+  release(window, canvas, cellSize, [8, 3]);
+
+  const expected = [[1, 1], [2, 1], [3, 1], [3, 2], [4, 2], [5, 2], [6, 2], [6, 3], [7, 3], [8, 3]];
+  assert.deepEqual(onStroke.calls[0].cells, expected);
+  assertSameCellSet(onStroke.calls[0].cells, denseOracleCellSet(cellSize, 1, 1, 8, 3));
+});
+
+test('(2,1) -> (4,9): a steep slope includes every cell the dense oracle crosses', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[2, 1], [4, 9]]);
+  release(window, canvas, cellSize, [4, 9]);
+
+  const expected = [[2, 1], [2, 2], [2, 3], [3, 3], [3, 4], [3, 5], [3, 6], [3, 7], [4, 7], [4, 8], [4, 9]];
+  assert.deepEqual(onStroke.calls[0].cells, expected);
+  assertSameCellSet(onStroke.calls[0].cells, denseOracleCellSet(cellSize, 2, 1, 4, 9));
+});
+
+test('(8,8) -> (2,5): a negative-direction slope includes every cell the dense oracle crosses', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[8, 8], [2, 5]]);
+  release(window, canvas, cellSize, [2, 5]);
+
+  const expected = [[2, 5], [3, 5], [3, 6], [4, 6], [5, 6], [5, 7], [6, 7], [7, 7], [7, 8], [8, 8]];
+  assert.deepEqual(onStroke.calls[0].cells, expected);
+  assertSameCellSet(onStroke.calls[0].cells, denseOracleCellSet(cellSize, 8, 8, 2, 5));
+});
+
+test('sparse single-jump strokes match the independent dense-sampling oracle across a range of slopes (property check)', () => {
+  const pairs = [
+    [0, 0, 4, 2], [4, 2, 0, 0], [1, 1, 8, 3], [2, 1, 4, 9], [8, 8, 2, 5], [3, 7, 11, 2],
+    [0, 0, 9, 1], [0, 0, 1, 9], [1, 1, 5, 1], [1, 1, 1, 5], [0, 0, 4, 4], [6, 6, 6, 6],
+  ];
+  for (const [x0, y0, x1, y1] of pairs) {
+    const { window, frame, grid, cellSize } = buildBoard();
+    const onStroke = strokesRecorder();
+    const editor = createFogEditor({ frame, grid, onStroke });
+    editor.setFog(baseFog());
+    editor.setActive(true);
+    const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+    drag(window, canvas, cellSize, [[x0, y0], [x1, y1]]);
+    release(window, canvas, cellSize, [x1, y1]);
+
+    assertSameCellSet(
+      onStroke.calls[0].cells,
+      denseOracleCellSet(cellSize, x0, y0, x1, y1),
+      `[${x0},${y0}]->[${x1},${y1}] sparse result must equal the independent dense-path oracle`,
+    );
+  }
 });
 
 test('reverse-direction movement within one stroke still produces the full continuous path once, deduped', () => {
@@ -348,7 +487,7 @@ test('reverse-direction movement within one stroke still produces the full conti
   assert.deepEqual(onStroke.calls[0].cells, [[0, 1], [1, 1], [2, 1], [3, 1], [4, 1], [5, 1]]);
 });
 
-test('a larger brush stays continuous under sparse movement, not just at the two sampled endpoints', () => {
+test('a larger brush stays continuous under an arbitrary sparse path, verified against the independent oracle', () => {
   const { window, frame, grid, cellSize } = buildBoard();
   const onStroke = strokesRecorder();
   const editor = createFogEditor({ frame, grid, onStroke });
@@ -357,11 +496,14 @@ test('a larger brush stays continuous under sparse movement, not just at the two
   editor.setBrushSize(3);
   const canvas = frame.querySelector('canvas.fog-editor-canvas');
 
-  drag(window, canvas, cellSize, [[2, 2], [2, 6]]);
-  release(window, canvas, cellSize, [2, 6]);
+  drag(window, canvas, cellSize, [[2, 2], [9, 5]]); // arbitrary slope, not axis-aligned
+  release(window, canvas, cellSize, [9, 5]);
 
+  // The path itself comes from the independent oracle (never from gridLineCells); only the brush
+  // expansion at each oracle cell reuses the existing, already-covered fogMask.brushCells.
+  const oraclePath = Array.from(denseOracleCellSet(cellSize, 2, 2, 9, 5)).map(key => key.split(',').map(Number));
   const expected = new Map();
-  for (const [x, y] of gridLineCells(2, 2, 2, 6)) {
+  for (const [x, y] of oraclePath) {
     for (const cell of brushCells({ x, y, size: 3, width: 20, height: 20 })) {
       expected.set(`${cell[0]},${cell[1]}`, cell);
     }
@@ -385,6 +527,24 @@ test('a backtracked/repeated sparse path still normalizes to the deduped set wit
   const keys = cells.map(([x, y]) => `${x},${y}`);
   assert.equal(new Set(keys).size, keys.length, 'no duplicate cells in the committed payload');
   assert.deepEqual(cells, [[3, 3], [4, 3], [5, 3], [6, 3], [7, 3], [8, 3]]);
+});
+
+test('a backtracked arbitrary-slope path also normalizes to the deduped set with no duplicates', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  // Sparse diagonal-ish forward jump, then a jump that retraces the same span, then forward again.
+  drag(window, canvas, cellSize, [[0, 0], [4, 2], [0, 0], [4, 2]]);
+  release(window, canvas, cellSize, [4, 2]);
+
+  const cells = onStroke.calls[0].cells;
+  const keys = cells.map(([x, y]) => `${x},${y}`);
+  assert.equal(new Set(keys).size, keys.length, 'no duplicate cells in the committed payload');
+  assertSameCellSet(cells, denseOracleCellSet(cellSize, 0, 0, 4, 2));
 });
 
 // --- Shift temporary inversion ---

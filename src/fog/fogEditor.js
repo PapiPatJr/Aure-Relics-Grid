@@ -23,12 +23,13 @@
  * `fogMask.brushCells`, and dedup/ordering reuses `fogMask.collapseCells`, so this module and the
  * server's own canonicalization (`private.fog_canonical_cells`) agree on what a stroke contains.
  *
- * Sparse pointer sampling (10E-FIX defect 1): browsers coalesce/drop `pointermove` events under
- * fast motion, so two consecutive samples can land on non-adjacent grid cells. `gridLineCells`
- * (a standard integer Bresenham walk) reconstructs every grid cell the pointer's path logically
- * crossed between the previous sampled cell and the new one, and a brush is applied at every one
- * of those cells — never just the two sampled endpoints. This keeps a fast flick and a slow,
- * densely-sampled drag along the same route producing the same painted path.
+ * Sparse pointer sampling (10E-FIX defect 1 / 10E-FIX2): browsers coalesce/drop `pointermove`
+ * events under fast motion, so two consecutive samples can land on non-adjacent grid cells.
+ * `gridLineCells` (a supercover/grid-traversal walk — see its own docstring for why this is not
+ * plain Bresenham) reconstructs every grid cell the pointer's path actually crossed between the
+ * previous sampled cell and the new one, and a brush is applied at every one of those cells —
+ * never just the two sampled endpoints. This keeps a fast flick and a slow, densely-sampled drag
+ * along the same route producing the same painted path.
  *
  * Authoritative-context safety (10E-FIX defect 2): a stroke captures the level identity and board
  * dimensions it began under. If `setFog()` delivers a new authoritative projection for a
@@ -89,10 +90,30 @@ function clamp01(value) {
 }
 
 /**
- * Standard integer Bresenham line walk from `(x0, y0)` to `(x1, y1)` inclusive of both endpoints.
- * Deterministic for horizontal, vertical, exact-diagonal, and arbitrary-slope movement in any
- * direction (reversing the endpoints reverses the emitted order, not the set of cells). Exported
- * for direct unit coverage; the only caller is `addBrushAt`'s path interpolation below.
+ * Supercover grid traversal from cell `(x0, y0)` to cell `(x1, y1)` inclusive of both endpoints:
+ * every grid cell the straight continuous line between the two cells' centers actually passes
+ * through, not merely a representative raster approximation of it (10E-FIX2).
+ *
+ * A prior version of this helper used standard Bresenham, which deliberately picks one
+ * "representative" cell per major-axis step and is allowed to skip a cell a real continuous
+ * pointer path would still cross — e.g. Bresenham from `(0,0)` to `(4,2)` yields
+ * `[[0,0],[1,1],[2,1],[3,2],[4,2]]`, omitting `[1,0]` and `[3,1]`, both of which a densely-sampled
+ * pointer moving along that same straight line does cross. That gap is exactly the class of bug
+ * this rewrite fixes: sparse pointer sampling (this module's whole reason for interpolating at
+ * all) must produce the same logical painted cell set a hypothetically infinitely-dense sampling
+ * of the same path would.
+ *
+ * The algorithm below is the standard integer supercover/grid-traversal construction: walking from
+ * one cell to the next, at each step it asks whether the line crosses the next vertical grid line,
+ * the next horizontal grid line, or both at once (an exact corner crossing), by comparing
+ * `(1 + 2*ixStep) * ny` against `(1 + 2*iyStep) * nx` — the sign-independent, magnitude-only
+ * comparison that is what makes this traversal exactly symmetric under swapping the two endpoints
+ * (A→B and B→A always produce the identical *set* of cells, only in reverse order), unlike
+ * Bresenham's tie-breaking. Every step moves to an orthogonally- or diagonally-adjacent cell, so
+ * the returned path is always fully connected — horizontal, vertical, and exact-diagonal segments
+ * degrade to the same simple continuous walk they always were.
+ *
+ * Exported for direct unit coverage; the only caller is `addBrushAt`'s path interpolation below.
  * @param {number} x0
  * @param {number} y0
  * @param {number} x1
@@ -100,23 +121,33 @@ function clamp01(value) {
  * @returns {number[][]}
  */
 export function gridLineCells(x0, y0, x1, y1) {
-  const cells = [];
-  const dx = Math.abs(x1 - x0);
-  const dy = -Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1;
-  const sy = y0 < y1 ? 1 : -1;
-  let err = dx + dy;
+  const cells = [[x0, y0]];
+  const nx = Math.abs(x1 - x0);
+  const ny = Math.abs(y1 - y0);
+  const sx = x1 > x0 ? 1 : -1;
+  const sy = y1 > y0 ? 1 : -1;
   let x = x0;
   let y = y0;
-  // A finite grid path can never require more steps than the board's own cell count; this bound
-  // only guards against a caller passing non-finite/absurd coordinates and is never reached for
-  // any real pointer-derived cell pair.
-  for (let guard = 0; guard < 1_000_000; guard += 1) {
+  let ixStep = 0;
+  let iyStep = 0;
+  while (ixStep < nx || iyStep < ny) {
+    const lhs = (1 + 2 * ixStep) * ny;
+    const rhs = (1 + 2 * iyStep) * nx;
+    if (lhs < rhs) {
+      x += sx;
+      ixStep += 1;
+    } else if (lhs > rhs) {
+      y += sy;
+      iyStep += 1;
+    } else {
+      // Exact corner crossing: the line passes precisely through the shared corner of four
+      // cells, so only the one diagonal neighbor is entered, never both orthogonal ones.
+      x += sx;
+      y += sy;
+      ixStep += 1;
+      iyStep += 1;
+    }
     cells.push([x, y]);
-    if (x === x1 && y === y1) break;
-    const e2 = 2 * err;
-    if (e2 >= dy) { err += dy; x += sx; }
-    if (e2 <= dx) { err += dx; y += sy; }
   }
   return cells;
 }

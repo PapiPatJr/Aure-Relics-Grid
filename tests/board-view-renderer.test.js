@@ -122,6 +122,69 @@ test('interactionMode defaults to "interactive" when omitted (own-character HP c
   assert.ok(container.querySelector('[data-character-id="c1"] [data-realtime-action="adjust-own-hp"]'));
 });
 
+// --- Issue #10 Task 4: shared player fog stage, mounted only for presentationMode: 'player' ---
+
+function fogFixture(overrides = {}) {
+  return { levelId: 'level-1', width: 5, height: 4, enabled: true, revealedRuns: [[0, 0, 2]], ...overrides };
+}
+
+test('a player-shaped view carrying fog renders a sized .fog-player-stage', () => {
+  const { container } = makeContainer();
+  renderBoardView(container, playerShapedView({ fog: fogFixture() }), { presentationMode: 'player' });
+  const stage = container.querySelector('.fog-player-stage');
+  assert.ok(stage, 'fog stage is rendered');
+  const canvas = stage.querySelector('canvas.fog-player-canvas');
+  assert.ok(canvas);
+  assert.equal(canvas.width, 5 * 32);
+  assert.equal(canvas.height, 4 * 32);
+});
+
+test('a view with no fog (fog: null, existing Issue #9 sessions) renders no fog stage at all', () => {
+  const { container } = makeContainer();
+  renderBoardView(container, playerShapedView({ fog: null }), { presentationMode: 'player' });
+  assert.equal(container.querySelector('.fog-player-stage'), null);
+});
+
+test('presentationMode "dm" never renders the player fog stage, even when fog is present', () => {
+  const { container } = makeContainer();
+  renderBoardView(container, dmShapedView({ fog: fogFixture() }), { presentationMode: 'dm' });
+  assert.equal(container.querySelector('.fog-player-stage'), null);
+});
+
+test('the DM read-only Player Preview (presentationMode: "player", interactionMode: "readOnly") renders the same fog stage shape as the real Player Screen for identical fog', () => {
+  const fog = fogFixture();
+  const { container: playerContainer } = makeContainer();
+  renderBoardView(playerContainer, playerShapedView({ fog }), { presentationMode: 'player' });
+
+  const { container: previewContainer } = makeContainer();
+  renderBoardView(previewContainer, dmShapedView({ fog }), { presentationMode: 'player', interactionMode: 'readOnly' });
+
+  const playerCanvas = playerContainer.querySelector('canvas.fog-player-canvas');
+  const previewCanvas = previewContainer.querySelector('canvas.fog-player-canvas');
+  assert.ok(playerCanvas);
+  assert.ok(previewCanvas);
+  assert.equal(playerCanvas.width, previewCanvas.width);
+  assert.equal(playerCanvas.height, previewCanvas.height);
+  // Both call sites reach the exact same renderBoardView -> buildPlayerFogStage code path with
+  // presentationMode: 'player' — there is no second implementation to drift out of parity.
+});
+
+test('the fog stage renders no [data-realtime-action] controls of its own, in either interaction mode', () => {
+  const fog = fogFixture();
+  for (const interactionMode of ['interactive', 'readOnly']) {
+    const { container } = makeContainer();
+    renderBoardView(container, playerShapedView({ fog }), { presentationMode: 'player', interactionMode });
+    const stage = container.querySelector('.fog-player-stage');
+    assert.equal(stage.querySelectorAll('[data-realtime-action]').length, 0);
+  }
+});
+
+test('a malformed fog payload (unusable identity/dimensions) never renders a fog stage, matching fogRenderer.buildPlayerFogStage', () => {
+  const { container } = makeContainer();
+  renderBoardView(container, playerShapedView({ fog: { enabled: true, revealedRuns: [] } }), { presentationMode: 'player' });
+  assert.equal(container.querySelector('.fog-player-stage'), null);
+});
+
 test('re-rendering with a new view fully replaces prior DOM, no stale nodes survive', () => {
   const { container } = makeContainer();
   renderBoardView(container, playerShapedView({ tokens: [{ id: 'first-only', kind: 'player', label: 'First', isVisible: true }] }), { presentationMode: 'player' });

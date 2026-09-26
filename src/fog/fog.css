@@ -1,0 +1,36 @@
+/*
+ * Player-facing fog stage (Issue #10 Task 4). Rendered only by src/fog/fogRenderer.js's
+ * buildPlayerFogStage(), from the single presentation path shared by the real Player Screen and
+ * the DM's read-only Player Preview (see src/board/boardViewRenderer.js). The actual fog
+ * concealment/reveal is drawn on the canvas by JS, not by any CSS color/opacity/filter rule here
+ * — nothing in this file may become part of the security boundary. This stylesheet only ever
+ * lays the stage out and sizes it; it never targets ".fog-player-canvas" with an opacity, filter,
+ * blend-mode or transform that could soften or bypass what the canvas already decided to draw.
+ *
+ * The DM fog-management overlay/frontier (renderManagementFog) has no styling here yet — it is
+ * not wired into any DM UI in this package (Issue #10E/10F).
+ */
+
+.fog-player-stage {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: var(--fog-cols, 1) / var(--fog-rows, 1);
+  overflow: hidden;
+  border: 1px solid var(--border-dark, #4c3b22);
+  background: var(--ink-black, #080705);
+}
+
+.fog-player-stage-base {
+  position: absolute;
+  inset: 0;
+  background: var(--panel, #18130d);
+}
+
+.fog-player-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}

@@ -109,6 +109,30 @@ test('deriveDisplayView(managerView, "player") drops an entity lacking publicVis
   assert.deepEqual(result.initiative, []);
 });
 
+// --- Issue #10 Task 4: fog is top-level (not under dm), so it must survive both derivation paths ---
+
+test('deriveDisplayView(managerView, "player") retains top-level fog even though dm becomes null', () => {
+  const fog = { levelId: 'level-1', width: 4, height: 4, enabled: true, revealedRuns: [] };
+  const view = Object.freeze(managerViewWithMixedVisibility());
+  const withFog = { ...view, fog };
+  const result = deriveDisplayView(withFog, 'player');
+  assert.equal(result.fog, fog);
+  assert.equal(result.dm, null);
+});
+
+test('deriveDisplayView on an actual player-shaped view retains top-level fog unchanged', () => {
+  const fog = { levelId: 'level-1', width: 4, height: 4, enabled: true, revealedRuns: [] };
+  const view = baseView({ authority: { canManage: false, ownCharacterId: null }, dm: null, fog });
+  const result = deriveDisplayView(view, 'player');
+  assert.equal(result.fog, fog);
+});
+
+test('deriveDisplayView(view, "dm") is a no-op reference passthrough, so fog is untouched too', () => {
+  const fog = { levelId: 'level-1', width: 4, height: 4, enabled: true, revealedRuns: [] };
+  const view = baseView({ fog });
+  assert.equal(deriveDisplayView(view, 'dm').fog, fog);
+});
+
 test('deriveDisplayView on an ACTUAL PLAYER-SHAPED view (authority.canManage: false) is never filtered by publicVisible, preserving own-character data even when publicVisible is false', () => {
   // A real player's own recipient snapshot: the backend already includes the player's own
   // character via the own-character rule even if that character isn't yet publicly approved.

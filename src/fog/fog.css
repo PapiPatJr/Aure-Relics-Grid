@@ -48,3 +48,23 @@
   image-rendering: -webkit-crisp-edges;
   image-rendering: pixelated;
 }
+
+/*
+ * DM-only Fog Mode editor overlay (Issue #10E, src/fog/fogEditor.js). Attached as a sibling to
+ * `#grid` inside `.grid-frame` — never appended inside `#grid` itself, which is a CSS Grid whose
+ * children are the legacy cell/token layout — and sits above it via `z-index` so it can own
+ * pointer painting while Fog Mode is active. Only static layout lives here: `fogEditor.js` sets
+ * `left`/`top`/`width`/`height` at runtime to track `#grid`'s live position/size, and toggles
+ * `pointer-events` between `none`/`auto` as Fog Mode is entered/exited (design §6 — inactive Fog
+ * Mode must not intercept normal board interaction at all). Concealment/frontier/preview pixels
+ * are drawn by JS (`renderManagementFog`), never by a CSS color/opacity/filter rule here, the same
+ * separation `.fog-player-canvas` above already keeps.
+ */
+.fog-editor-canvas {
+  position: absolute;
+  z-index: 5;
+  touch-action: none;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: -webkit-crisp-edges;
+  image-rendering: pixelated;
+}

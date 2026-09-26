@@ -29,22 +29,36 @@ function isSafeInteger(value) {
   return typeof value === 'number' && Number.isInteger(value);
 }
 
+function isUsableLevelId(value) {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 /**
  * Decode the compact `[y, xStartInclusive, xEndExclusive]` revealed-run projection into a
  * fixed-size `Uint8Array` mask (one byte per cell, `1` = revealed, `0` = hidden), addressed
  * `mask[y * width + x]`. Never allocates one object per cell, so it stays bounded on a
  * 200x200 board.
  *
- * Fail-closed contract: if the board dimensions themselves cannot be trusted, everything
- * about the payload is unusable and the result reports a 0x0 empty mask. If the dimensions
- * are trustworthy but `enabled`/`revealedRuns` is malformed or any run is out of bounds, the
+ * Fail-closed contract: if the level identity or board dimensions themselves cannot be
+ * trusted, everything about the payload is unusable and the result reports a 0x0 empty mask
+ * with `levelId: null`. If identity/dimensions are trustworthy but `enabled`/`revealedRuns` is
+ * malformed, any run is out of bounds, or the runs are not in canonical `(y, xStart)` order
+ * (the server never emits unsorted, overlapping, or touching-but-unmerged runs — see
+ * `private.fog_revealed_runs` in `supabase/migrations/20260925223000_fog_projection.sql`), the
  * result keeps the known-good `width`/`height` (so a renderer can still cover the real board)
- * but the mask is entirely hidden and `valid` is `false`. A caller must treat `valid: false`
+ * but the mask is entirely hidden and `valid` is `false`. Unsorted input is never re-sorted
+ * into validity: canonical ordering is a property of an authentic payload, not something this
+ * function repairs.
+ *
+ * On every invalid path `enabled` is unconditionally reported as `true`, never the payload's
+ * own (possibly attacker- or bug-controlled) value. A malformed projection must never produce
+ * a state a downstream consumer could read as "fog disabled, show everything" — `valid: false`
+ * and `enabled: false` must never be true at the same time. A caller must treat `valid: false`
  * the same as "hidden everywhere" — never as "unknown, so show it".
  *
- * `enabled` is surfaced separately from the mask on purpose (design §8.3 / plan 3.1): stored
- * revealed cells persist even while fog is disabled, so decoding never conflates "fog is off"
- * with "nothing has been revealed".
+ * `enabled` is surfaced separately from the mask on purpose when the payload *is* valid
+ * (design §8.3 / plan 3.1): stored revealed cells persist even while fog is disabled, so
+ * decoding never conflates "fog is off" with "nothing has been revealed".
  *
  * @param {unknown} fog Planned snapshot shape: `{ levelId, width, height, enabled, revealedRuns }`.
  * @returns {{ valid: boolean, levelId: string|null, width: number, height: number, enabled: boolean, mask: Uint8Array }}
@@ -54,41 +68,48 @@ export function decodeRevealedRuns(fog) {
     return { valid: false, levelId: null, width: 0, height: 0, enabled: true, mask: new Uint8Array(0) };
   }
 
-  const levelId = typeof fog.levelId === 'string' ? fog.levelId : null;
-  const { width, height } = fog;
-  if (!isSafeDimension(width) || !isSafeDimension(height)) {
-    return { valid: false, levelId, width: 0, height: 0, enabled: true, mask: new Uint8Array(0) };
+  const { levelId, width, height } = fog;
+  if (!isUsableLevelId(levelId) || !isSafeDimension(width) || !isSafeDimension(height)) {
+    return { valid: false, levelId: null, width: 0, height: 0, enabled: true, mask: new Uint8Array(0) };
   }
 
-  const hiddenFallback = enabledValue => ({
+  const hiddenFallback = () => ({
     valid: false,
     levelId,
     width,
     height,
-    enabled: typeof enabledValue === 'boolean' ? enabledValue : true,
+    enabled: true, // never the payload's own value: an invalid projection can never read as "disabled"
     mask: new Uint8Array(width * height), // zero-filled by construction: fully hidden
   });
 
-  if (typeof fog.enabled !== 'boolean') return hiddenFallback(true);
-  if (!Array.isArray(fog.revealedRuns)) return hiddenFallback(fog.enabled);
+  if (typeof fog.enabled !== 'boolean') return hiddenFallback();
+  if (!Array.isArray(fog.revealedRuns)) return hiddenFallback();
 
   const mask = new Uint8Array(width * height);
+  let prevY = -1;
+  let prevXEnd = -Infinity;
   for (const run of fog.revealedRuns) {
-    if (!Array.isArray(run) || run.length !== 3) return hiddenFallback(fog.enabled);
+    if (!Array.isArray(run) || run.length !== 3) return hiddenFallback();
     const [y, xStart, xEnd] = run;
-    if (!isSafeInteger(y) || !isSafeInteger(xStart) || !isSafeInteger(xEnd)) return hiddenFallback(fog.enabled);
-    if (y < 0 || y >= height || xStart < 0 || xEnd > width || xStart >= xEnd) return hiddenFallback(fog.enabled);
+    if (!isSafeInteger(y) || !isSafeInteger(xStart) || !isSafeInteger(xEnd)) return hiddenFallback();
+    if (y < 0 || y >= height || xStart < 0 || xEnd > width || xStart >= xEnd) return hiddenFallback();
+    // Canonical order only: strictly increasing rows, and within a row strictly increasing,
+    // non-overlapping, non-touching runs (touching runs would have been merged server-side).
+    if (y < prevY || (y === prevY && xStart <= prevXEnd)) return hiddenFallback();
     mask.fill(1, y * width + xStart, y * width + xEnd);
+    prevY = y;
+    prevXEnd = xEnd;
   }
 
   return { valid: true, levelId, width, height, enabled: fog.enabled, mask };
 }
 
 /**
- * Query a decoded mask. Any malformed input (wrong mask type, non-integer/negative
- * coordinates, coordinates outside `width`/the mask's implied height) reports `false`
- * (hidden) rather than throwing or guessing — this is the fail-closed leaf every renderer
- * should call through rather than indexing `mask` directly.
+ * Query a decoded mask. Any malformed input (wrong mask type, a ragged mask whose length is
+ * not an exact multiple of `width` and therefore cannot form a rectangular grid,
+ * non-integer/negative coordinates, coordinates outside `width`/the mask's implied height)
+ * reports `false` (hidden) rather than throwing or guessing — this is the fail-closed leaf
+ * every renderer should call through rather than indexing `mask` directly.
  * @param {Uint8Array} mask
  * @param {number} width
  * @param {number} x
@@ -97,10 +118,10 @@ export function decodeRevealedRuns(fog) {
  */
 export function isCellRevealed(mask, width, x, y) {
   if (!(mask instanceof Uint8Array) || !isSafeInteger(width) || width <= 0) return false;
-  if (!isSafeInteger(x) || !isSafeInteger(y) || x < 0 || y < 0 || x >= width) return false;
-  const index = y * width + x;
-  if (index < 0 || index >= mask.length) return false;
-  return mask[index] === 1;
+  if (mask.length % width !== 0) return false; // ragged: not a whole number of rows
+  const height = mask.length / width;
+  if (!isSafeInteger(x) || !isSafeInteger(y) || x < 0 || y < 0 || x >= width || y >= height) return false;
+  return mask[y * width + x] === 1;
 }
 
 /**

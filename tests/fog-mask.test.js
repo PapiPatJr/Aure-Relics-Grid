@@ -144,6 +144,75 @@ test('a malformed revealedRuns container fails closed', () => {
   assert.equal(countRevealed(decoded.mask), 0);
 });
 
+test('QA regression: malformed disabled fog cannot bypass masking — an invalid projection never reports enabled:false', () => {
+  const decoded = decodeRevealedRuns({ levelId: 'level', width: 2, height: 2, enabled: false, revealedRuns: 'bad' });
+  assert.equal(decoded.valid, false);
+  // The projection itself is malformed, so a consumer must never be able to read this as
+  // "fog disabled, show everything" — enabled is unconditionally forced true when invalid.
+  assert.equal(decoded.enabled, true);
+  assert.equal(countRevealed(decoded.mask), 0);
+});
+
+test('QA regression: a missing or unusable level identity is rejected, not silently defaulted', () => {
+  const cases = [
+    {}, // no levelId at all
+    { levelId: null },
+    { levelId: '' },
+    { levelId: '   ' }, // whitespace-only is not a usable identity
+    { levelId: 42 },
+  ];
+  for (const overrides of cases) {
+    const decoded = decodeRevealedRuns({ width: 5, height: 5, enabled: true, revealedRuns: [], ...overrides });
+    assert.equal(decoded.valid, false, JSON.stringify(overrides));
+    assert.equal(decoded.levelId, null);
+    assert.equal(decoded.width, 0);
+    assert.equal(decoded.height, 0);
+    assert.equal(decoded.enabled, true);
+    assert.equal(decoded.mask.length, 0);
+  }
+});
+
+test('QA regression: noncanonical revealed-run ordering is rejected, never sorted into validity', () => {
+  // Rows out of order.
+  const outOfRowOrder = decodeRevealedRuns({
+    levelId: 'lvl-1', width: 5, height: 5, enabled: true,
+    revealedRuns: [[1, 0, 1], [0, 0, 1]],
+  });
+  assert.equal(outOfRowOrder.valid, false);
+  assert.equal(countRevealed(outOfRowOrder.mask), 0);
+
+  // Same row, unsorted xStart.
+  const unsortedWithinRow = decodeRevealedRuns({
+    levelId: 'lvl-1', width: 5, height: 5, enabled: true,
+    revealedRuns: [[0, 3, 4], [0, 0, 1]],
+  });
+  assert.equal(unsortedWithinRow.valid, false);
+
+  // Same row, overlapping runs.
+  const overlapping = decodeRevealedRuns({
+    levelId: 'lvl-1', width: 5, height: 5, enabled: true,
+    revealedRuns: [[0, 0, 3], [0, 2, 4]],
+  });
+  assert.equal(overlapping.valid, false);
+
+  // Same row, touching (unmerged) runs — the server always emits maximal merged runs.
+  const touching = decodeRevealedRuns({
+    levelId: 'lvl-1', width: 5, height: 5, enabled: true,
+    revealedRuns: [[0, 0, 2], [0, 2, 4]],
+  });
+  assert.equal(touching.valid, false);
+
+  // Canonical order (strictly increasing rows, strictly increasing/non-overlapping within a row) still decodes.
+  const canonical = decodeRevealedRuns({
+    levelId: 'lvl-1', width: 5, height: 5, enabled: true,
+    revealedRuns: [[0, 0, 1], [0, 2, 3], [1, 0, 1]],
+  });
+  assert.equal(canonical.valid, true);
+  assert.equal(isCellRevealed(canonical.mask, canonical.width, 0, 0), true);
+  assert.equal(isCellRevealed(canonical.mask, canonical.width, 2, 0), true);
+  assert.equal(isCellRevealed(canonical.mask, canonical.width, 0, 1), true);
+});
+
 // --- isCellRevealed: fail closed on bad queries -----------------------------------------------
 
 test('isCellRevealed reports hidden for any out-of-bounds or malformed query rather than throwing', () => {
@@ -154,6 +223,16 @@ test('isCellRevealed reports hidden for any out-of-bounds or malformed query rat
   assert.equal(isCellRevealed(decoded.mask, decoded.width, 1.5, 0), false);
   assert.equal(isCellRevealed(null, decoded.width, 0, 0), false);
   assert.equal(isCellRevealed(decoded.mask, 0, 0, 0), false);
+});
+
+test('QA regression: a ragged mask (length not a multiple of width) fails closed instead of reporting a revealed cell', () => {
+  // length 5 is not a whole number of width-2 rows; row 2 (index 4) is a partial row.
+  const ragged = Uint8Array.from([0, 0, 0, 0, 1]);
+  assert.equal(isCellRevealed(ragged, 2, 0, 2), false);
+  // Every other query against the same ragged mask must also fail closed.
+  for (let y = 0; y < 3; y += 1) {
+    for (let x = 0; x < 2; x += 1) assert.equal(isCellRevealed(ragged, 2, x, y), false, `(${x},${y})`);
+  }
 });
 
 // --- brush footprints ---------------------------------------------------------------------

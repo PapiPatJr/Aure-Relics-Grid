@@ -36,9 +36,15 @@ insert into session_players values
  ('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000003','50000000-0000-0000-0000-000000000001','approved'),
  ('10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000004',null,'pending'),
  ('10000000-0000-0000-0000-000000000002','40000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000005','50000000-0000-0000-0000-000000000002','approved');
-insert into fog_cells values
- ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001',0,0,true),
- ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001',1,0,false);
+set local role authenticated;
+select set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000001","role":"authenticated","is_anonymous":false}',true);
+select mutate_session('40000000-0000-0000-0000-000000000001',jsonb_build_object(
+  'schemaVersion',1,'type','fog.paint','expectedRevision',get_session_snapshot('40000000-0000-0000-0000-000000000001')->>'revision',
+  'payload',jsonb_build_object('levelId','30000000-0000-0000-0000-000000000001','mode','reveal','cells','[[0,0]]'::jsonb)));
+select mutate_session('40000000-0000-0000-0000-000000000001',jsonb_build_object(
+  'schemaVersion',1,'type','fog.area.create','expectedRevision',get_session_snapshot('40000000-0000-0000-0000-000000000001')->>'revision',
+  'payload',jsonb_build_object('levelId','30000000-0000-0000-0000-000000000001','name','Boss room','cells','[[0,0]]'::jsonb,'revealedByDefault',false)));
+reset role;
 insert into tokens(id,campaign_id,level_id,kind,label,x,y,is_visible) values
  ('60000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','enemy','Visible enemy',0,0,true),
  ('60000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','boss','Hidden boss',0,0,false),
@@ -49,7 +55,6 @@ insert into private.dm_notes(campaign_id,body) values ('10000000-0000-0000-0000-
 insert into private.dm_notes(campaign_id,body) values ('10000000-0000-0000-0000-000000000002','B secret');
 insert into initiative_entries(campaign_id,session_id,token_id)
  select campaign_id,'40000000-0000-0000-0000-000000000001',id from tokens;
-insert into private.fog_areas(campaign_id,level_id,name) values ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','Boss room');
 insert into map_effects(campaign_id,level_id,kind,label,x,y,is_visible) values
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','trap','Hidden trap',0,0,false),
  ('10000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000001','hazard','Visible fire',0,0,true),
@@ -107,8 +112,8 @@ select throws_ok($$insert into storage.objects(bucket_id,name) values ('terrain-
 select throws_ok($$insert into storage.objects(bucket_id,name) values ('character-images','10000000-0000-0000-0000-000000000001/40000000-0000-0000-0000-000000000001/50000000-0000-0000-0000-000000000001/extra.png')$$,'42501',null,'guest cannot bypass single portrait slot');
 with changed as (update storage.objects set name='other.png' returning id) select is((select count(*)::int from changed),0,'guest cannot rename images');
 with changed as (delete from storage.objects returning id) select is((select count(*)::int from changed),0,'guest cannot delete images');
-select is((select count(*)::int from private.fog_areas),0,'private area labels and geometry absent');
-select is((select count(*)::int from fog_cells),1,'only revealed fog cell is readable');
+select throws_ok($$select count(*) from private.fog_areas$$,'42501',null,'player cannot read private fog areas directly');
+select throws_ok($$select count(*) from public.fog_cells$$,'42501',null,'player cannot read canonical fog cells directly');
 select is((select count(*)::int from terrain_objects),1,'terrain footprint crossing fog fails closed');
 select is((select count(*)::int from map_effects),1,'only revealed unfogged map effect readable');
 select throws_ok($$insert into campaigns(owner_id,name) values ('00000000-0000-0000-0000-000000000003','guest DM')$$,'42501',null,'anonymous guest cannot become campaign owner');

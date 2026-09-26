@@ -32,8 +32,11 @@ insert into tokens(id,campaign_id,level_id,kind,label,x,y,is_visible) values
 select ok(not has_table_privilege('authenticated','public.fog_cells','INSERT'),'authenticated cannot insert fog cells directly');
 select ok(not has_table_privilege('authenticated','public.fog_cells','UPDATE'),'authenticated cannot update fog cells directly');
 select ok(not has_table_privilege('authenticated','public.fog_cells','DELETE'),'authenticated cannot delete fog cells directly');
+select ok(not has_table_privilege('authenticated','public.fog_cells','SELECT'),'authenticated cannot read canonical fog cells directly');
 select ok(not has_table_privilege('authenticated','private.fog_areas','INSERT'),'authenticated cannot insert private fog areas directly');
+select ok(not has_table_privilege('authenticated','private.fog_areas','SELECT'),'authenticated cannot read private fog areas directly');
 select ok(not has_table_privilege('authenticated','private.fog_level_state','UPDATE'),'authenticated cannot update private fog revision state directly');
+select ok(not has_table_privilege('authenticated','private.fog_level_state','SELECT'),'authenticated cannot read private fog revision state directly');
 
 -- A participant may hydrate but never mutate fog.
 set local role authenticated;
@@ -72,8 +75,11 @@ select throws_ok(
 select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
   'schemaVersion',1,'type','fog.paint','expectedRevision',get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision',
   'payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000001','mode','reveal','cells','[[0,0],[0,0],[1,0]]'::jsonb)));
+-- Test-only canonical-state inspection. Application roles remain revoked and use snapshots/RPCs.
+reset role;
 select is((select count(*)::int from fog_cells where level_id='0b300000-0000-0000-0000-000000000001' and is_revealed),2,'duplicate stroke cells canonicalize to two revealed cells');
 select is((select initialized from private.fog_level_state where level_id='0b300000-0000-0000-0000-000000000001'),true,'paint marks level fog initialized');
+set local role authenticated;
 
 -- Stale manager state must fail before any write.
 select set_config('test.stale_fog_revision',get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision',true);
@@ -86,17 +92,26 @@ select throws_ok(
     'payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000001','mode','reveal','cells','[[2,0]]'::jsonb)))$$,
   '40001',null,'stale fog mutation is rejected'
 );
+reset role;
 select is((select count(*)::int from fog_cells where level_id='0b300000-0000-0000-0000-000000000001' and x=2 and y=0),0,'stale rejection leaves canonical fog unchanged');
+set local role authenticated;
 
 -- Area definition edits do not change live fog.
 select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
   'schemaVersion',1,'type','fog.area.create','expectedRevision',get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision',
   'payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000001','name','Starting Room','cells','[[0,0],[1,0],[2,0]]'::jsonb,'revealedByDefault',true)));
+reset role;
 select is((select count(*)::int from fog_cells where level_id='0b300000-0000-0000-0000-000000000001' and x=2 and y=0),0,'area create changes definition only, not live fog');
+set local role authenticated;
 select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
   'schemaVersion',1,'type','fog.area.setVisibility','expectedRevision',get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision',
-  'payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000001','areaId',(select id from private.fog_areas where name='Starting Room'),'revealed',true)));
+  'payload',jsonb_build_object(
+    'levelId','0b300000-0000-0000-0000-000000000001',
+    'areaId',(select area->>'id' from jsonb_array_elements(get_session_snapshot('0b400000-0000-0000-0000-000000000001')->'dm'->'fog'->'areas') area where area->>'name'='Starting Room'),
+    'revealed',true)));
+reset role;
 select is((select count(*)::int from fog_cells where level_id='0b300000-0000-0000-0000-000000000001' and is_revealed),3,'Reveal Area writes selected canonical cells in one logical operation');
+set local role authenticated;
 
 -- Hidden-by-default wins overlapping reset defaults.
 select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
@@ -104,20 +119,26 @@ select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
   'payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000001','name','Secret Alcove','cells','[[1,0]]'::jsonb,'revealedByDefault',false)));
 select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
   'schemaVersion',1,'type','fog.resetDefaults','expectedRevision',get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision','payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000001')));
+reset role;
 select is((select count(*)::int from fog_cells where level_id='0b300000-0000-0000-0000-000000000001' and is_revealed),2,'reset reveals default-Revealed cells except Hidden-default overlap');
 select ok(not exists(select 1 from fog_cells where level_id='0b300000-0000-0000-0000-000000000001' and x=1 and y=0 and is_revealed),'Hidden-default overlap wins reset precedence');
+set local role authenticated;
 
 -- Broad actions are set-based, preserve disclosure, and advance manager projection once.
 select set_config('test.before_reveal_all',(get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision'),true);
 select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
   'schemaVersion',1,'type','fog.revealAll','expectedRevision',current_setting('test.before_reveal_all'),'payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000001')));
+reset role;
 select is((select count(*)::int from fog_cells where level_id='0b300000-0000-0000-0000-000000000001' and is_revealed),16,'Reveal All reveals every active-level cell');
+set local role authenticated;
 select is((get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision')::bigint,current_setting('test.before_reveal_all')::bigint+1,'Reveal All advances manager projection exactly once');
 select is((select is_visible from tokens where id='0b600000-0000-0000-0000-000000000001'),false,'fog actions do not alter hidden-object disclosure');
 
 select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
   'schemaVersion',1,'type','fog.hideAll','expectedRevision',get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision','payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000001')));
+reset role;
 select is((select count(*)::int from fog_cells where level_id='0b300000-0000-0000-0000-000000000001'),0,'Hide All stores Hidden sparsely as no rows');
+set local role authenticated;
 
 -- Preserve stored mask when fog is disabled/re-enabled.
 select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
@@ -126,12 +147,16 @@ select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
 select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
   'schemaVersion',1,'type','fog.setLevelOverride','expectedRevision',get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision',
   'payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000001','enabled',false)));
+reset role;
 select ok(exists(select 1 from fog_cells where level_id='0b300000-0000-0000-0000-000000000001' and x=3 and y=3 and is_revealed),'Disable Fog preserves stored revealed cells');
+set local role authenticated;
 select is((select is_visible from tokens where id='0b600000-0000-0000-0000-000000000001'),false,'Disable Fog does not disclose hidden token');
 select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
   'schemaVersion',1,'type','fog.setLevelOverride','expectedRevision',get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision',
   'payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000001','enabled',true)));
+reset role;
 select ok(exists(select 1 from fog_cells where level_id='0b300000-0000-0000-0000-000000000001' and x=3 and y=3 and is_revealed),'re-enable restores exact stored mask');
+set local role authenticated;
 
 -- Non-presented 200x200 level: player watermark stays put while manager level revision advances.
 select set_config('test.manager_before_offscreen',get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision',true);
@@ -140,8 +165,10 @@ select set_config('test.player_before_offscreen',get_session_snapshot('0b400000-
 select set_config('request.jwt.claims','{"sub":"0b000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
 select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
   'schemaVersion',1,'type','fog.revealAll','expectedRevision',current_setting('test.manager_before_offscreen'),'payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000002')));
+reset role;
 select is((select count(*)::int from fog_cells where level_id='0b300000-0000-0000-0000-000000000002' and is_revealed),40000,'Reveal All handles maximum 200x200 level set-wise');
 select ok((select revision>0 from private.fog_level_state where level_id='0b300000-0000-0000-0000-000000000002'),'offscreen edit advances level fog revision');
+set local role authenticated;
 select set_config('request.jwt.claims','{"sub":"0b000000-0000-0000-0000-000000000002","role":"authenticated"}',true);
 select is(get_session_snapshot('0b400000-0000-0000-0000-000000000001')->>'revision',current_setting('test.player_before_offscreen'),'offscreen fog edit does not advance real player active-level projection');
 reset role;

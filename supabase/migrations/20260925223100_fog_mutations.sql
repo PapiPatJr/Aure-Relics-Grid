@@ -128,7 +128,6 @@ declare
   v_cells jsonb;
   v_name text;
   v_revealed boolean;
-  v_enabled boolean;
   v_refresh_explicit boolean:=false;
   v_initialize boolean:=false;
 begin

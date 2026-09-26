@@ -29,8 +29,49 @@ export const SyncStatus = Object.freeze({
  * passes the whole object through to `onSnapshot` unchanged. See the 8A contract for the
  * production shape (`schemaVersion, sessionId, campaignId, revision, authority, session,
  * roundNumber, tokens, characters, initiative, dm`).
+ *
+ * Issue #10 adds a top-level `fog` field and, for managers only, `dm.fog` (see
+ * `docs/superpowers/plans/2026-09-25-issue-10-fog-of-war.md` and
+ * `supabase/migrations/20260925223000_fog_projection.sql`'s `private.session_projection`).
+ * Both are opaque to the engine exactly like the rest of the snapshot; only `src/fog/fogMask.js`
+ * interprets them, and only through its fail-closed `decodeRevealedRuns`/`isCellRevealed`.
  * @property {string} sessionId
  * @property {string} revision Non-negative decimal string.
+ * @property {FogProjection|null} [fog] The active presented level's fog only — never every
+ *   level in the campaign. `null` when the session has no active level.
+ * @property {{ fog?: FogManagerState|null }} [dm] Manager-only; `dm` itself is `null`/absent
+ *   for a real player. Player snapshots never contain `dm.fog` or any named-area data.
+ */
+
+/**
+ * @typedef {Object} FogProjection
+ * Compact active-level fog presentation delivered to every authorized recipient (player and
+ * manager alike). `enabled` is reported independently of `revealedRuns`: stored revealed cells
+ * persist under `fog_cells` even while fog is disabled (design §4.2/§13.5), so a client must
+ * never infer "nothing revealed" from `enabled: false` or vice versa.
+ * @property {string} levelId
+ * @property {number} width
+ * @property {number} height
+ * @property {boolean} enabled
+ * @property {Array<[number, number, number]>} revealedRuns Deterministic
+ *   `[y, xStartInclusive, xEndExclusive]` runs; decode with `fogMask.decodeRevealedRuns`.
+ */
+
+/**
+ * @typedef {Object} FogManagerState
+ * DM-only fog-management metadata nested under `dm.fog`. Never sent to a real player
+ * projection (design §8.2). `areas`/`levelRevisions` intentionally expose only compact
+ * `cellRuns`/decimal revision strings, never raw per-cell objects.
+ * @property {boolean} campaignEnabled
+ * @property {string} locationId
+ * @property {boolean|null} locationOverride
+ * @property {boolean|null} levelOverride
+ * @property {boolean} effectiveEnabled Resolved Level -> Location -> Campaign inheritance.
+ * @property {boolean} initialized Whether this level's fog has an established current state.
+ * @property {Array<{ id: string, levelId: string, name: string, cellRuns: Array<[number, number, number]>, revealedByDefault: boolean, status: 'Hidden'|'Revealed'|'Mixed' }>} areas
+ * @property {Array<{ levelId: string, revision: string }>} levelRevisions Per-level fog
+ *   revision watermarks (exact decimal strings) so a manager editing a non-presented level
+ *   still advances that level's own watermark without affecting a real player's projection.
  */
 
 /**

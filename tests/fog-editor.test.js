@@ -2,11 +2,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { createFogEditor } from '../src/fog/fogEditor.js';
+import { createFogEditor, gridLineCells } from '../src/fog/fogEditor.js';
 import { brushCells } from '../src/fog/fogMask.js';
 
 const SOURCE_PATH = 'src/fog/fogEditor.js';
+const CSS_PATH = 'src/fog/fog.css';
 const levelId = '66666666-6666-4666-8666-666666666666';
+const otherLevelId = '77777777-7777-4777-8777-777777777777';
+
+function sortCells(cells) {
+  return [...cells].sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
+}
 
 // jsdom's PointerEvent support is inconsistent (see tests/realtime-board-bridge.test.js); this
 // codebase's convention is a plain MouseEvent carrying the type/fields the handlers actually
@@ -122,6 +128,59 @@ test('pan/zoom remains available: the editor never blocks wheel events', () => {
   assert.equal(wheelEvent.defaultPrevented, false);
 });
 
+// --- Touch navigation coexistence (10E-FIX defect 3): no blanket touch-action block ---
+
+test('the overlay installs no inline touch-action, active or inactive', () => {
+  const { frame, grid } = buildBoard();
+  const editor = createFogEditor({ frame, grid, onStroke: strokesRecorder() });
+  editor.setFog(baseFog());
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+  assert.equal(canvas.style.touchAction, '', 'inactive: no inline touch-action');
+
+  editor.setActive(true);
+  assert.equal(canvas.style.touchAction, '', 'active: still no inline touch-action');
+});
+
+test("fog.css's real cascade resolves the overlay to touch-action:auto, never :none", () => {
+  // Exercises the actual shipped stylesheet's cascade (not a hand-copied assumption) through
+  // jsdom's real CSSOM, the same way a real browser would resolve `.fog-editor-canvas`'s computed
+  // style. This is what a blanket `touch-action: none` rule broke: the whole board would report
+  // 'none' here regardless of the individual object being touched.
+  const css = readFileSync(CSS_PATH, 'utf8');
+  const dom = new JSDOM(`<!doctype html><style>${css}</style><div class="grid-frame"><div id="grid"></div></div>`);
+  const { window } = dom;
+  const frame = window.document.querySelector('.grid-frame');
+  const grid = window.document.getElementById('grid');
+  createFogEditor({ frame, grid, onStroke: strokesRecorder() });
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+  assert.equal(window.getComputedStyle(canvas).touchAction, 'auto');
+});
+
+test('fog.css never reintroduces touch-action:none on the editor overlay rule', () => {
+  const css = readFileSync(CSS_PATH, 'utf8');
+  const ruleMatch = css.match(/\.fog-editor-canvas\s*\{[^}]*\}/);
+  assert.ok(ruleMatch, '.fog-editor-canvas rule must exist in fog.css');
+  assert.ok(!ruleMatch[0].includes('touch-action'), '.fog-editor-canvas must not set touch-action at all');
+});
+
+test('a native touch-pan takeover (pointercancel) discards the stroke cleanly, coexisting with navigation', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[6, 6], [7, 6]]);
+  // The browser recognized the touch gesture as a pan/scroll and took it over natively, which
+  // fires pointercancel at whatever element had the pointer — exactly like Escape/mode-exit, this
+  // must discard the uncommitted stroke rather than fight the browser for the gesture.
+  canvas.dispatchEvent(pointerEvent(window, 'pointercancel', { ...clientPointFor(cellSize, 7, 6), pointerId: 1 }));
+  release(window, canvas, cellSize, [7, 6]);
+
+  assert.equal(onStroke.calls.length, 0, 'a takeover-cancelled stroke must never commit');
+});
+
 // --- Reveal / Hide strokes and brush sizes ---
 
 test('a completed Reveal stroke invokes onStroke exactly once with the completed cell set', () => {
@@ -174,6 +233,159 @@ for (const size of [1, 2, 3, 5]) {
     assert.deepEqual(onStroke.calls[0].cells, expected);
   });
 }
+
+// --- Sparse pointer sampling: grid-line interpolation between coalesced samples (10E-FIX defect 1) ---
+
+test('gridLineCells: horizontal path is every intervening cell in order', () => {
+  assert.deepEqual(gridLineCells(1, 1, 5, 1), [[1, 1], [2, 1], [3, 1], [4, 1], [5, 1]]);
+});
+
+test('gridLineCells: vertical path is every intervening cell in order', () => {
+  assert.deepEqual(gridLineCells(1, 1, 1, 5), [[1, 1], [1, 2], [1, 3], [1, 4], [1, 5]]);
+});
+
+test('gridLineCells: exact diagonal path steps one cell per axis at a time', () => {
+  assert.deepEqual(gridLineCells(0, 0, 4, 4), [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4]]);
+});
+
+test('gridLineCells: a single point (no movement) is just that one cell', () => {
+  assert.deepEqual(gridLineCells(3, 3, 3, 3), [[3, 3]]);
+});
+
+test('gridLineCells: reversing an axis-aligned or exact-diagonal path reverses order but not the set', () => {
+  // Bresenham's tie-breaking for an arbitrary (non-axis-aligned, non-45-degree) slope is not
+  // guaranteed to be symmetric under endpoint swap — see the "reverse-direction movement" stroke
+  // test below, which shows the two directions' cells still union into one continuous painted
+  // path either way. Horizontal, vertical, and exact-diagonal lines have no tie-breaking
+  // ambiguity at all, so those ARE exactly symmetric.
+  for (const [x0, y0, x1, y1] of [[1, 1, 5, 1], [1, 1, 1, 5], [0, 0, 4, 4]]) {
+    const forward = gridLineCells(x0, y0, x1, y1);
+    const backward = gridLineCells(x1, y1, x0, y0);
+    assert.deepEqual(sortCells(forward), sortCells(backward));
+  }
+});
+
+test('gridLineCells: every step in an arbitrary-slope path stays adjacent to the previous cell', () => {
+  const path = gridLineCells(2, 9, 17, 3);
+  for (let i = 1; i < path.length; i += 1) {
+    const [px, py] = path[i - 1];
+    const [x, y] = path[i];
+    assert.ok(Math.abs(x - px) <= 1 && Math.abs(y - py) <= 1, `step ${i} [${px},${py}]->[${x},${y}] is not adjacent`);
+  }
+});
+
+test('sparse horizontal pointer movement fills every intervening cell', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  // Only two samples arrive (pointerdown at (1,1), one coalesced pointermove at (5,1)) — the
+  // browser dropped every intermediate pointermove under fast motion.
+  drag(window, canvas, cellSize, [[1, 1], [5, 1]]);
+  release(window, canvas, cellSize, [5, 1]);
+
+  assert.deepEqual(onStroke.calls[0].cells, [[1, 1], [2, 1], [3, 1], [4, 1], [5, 1]]);
+});
+
+test('sparse vertical pointer movement fills every intervening cell', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[1, 1], [1, 5]]);
+  release(window, canvas, cellSize, [1, 5]);
+
+  assert.deepEqual(onStroke.calls[0].cells, [[1, 1], [1, 2], [1, 3], [1, 4], [1, 5]]);
+});
+
+test('sparse diagonal pointer movement produces a continuous path', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[0, 0], [4, 4]]);
+  release(window, canvas, cellSize, [4, 4]);
+
+  assert.deepEqual(onStroke.calls[0].cells, [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4]]);
+});
+
+test('sparse movement with a nontrivial slope produces a continuous, deterministic path', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[0, 0], [4, 2]]);
+  release(window, canvas, cellSize, [4, 2]);
+
+  assert.deepEqual(onStroke.calls[0].cells, gridLineCells(0, 0, 4, 2));
+});
+
+test('reverse-direction movement within one stroke still produces the full continuous path once, deduped', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  // Sparse jump out to (5,1), then a sparse jump back past the start to (0,1): the two directions
+  // overlap heavily and must collapse to one deduped, deterministic path.
+  drag(window, canvas, cellSize, [[1, 1], [5, 1], [0, 1]]);
+  release(window, canvas, cellSize, [0, 1]);
+
+  assert.deepEqual(onStroke.calls[0].cells, [[0, 1], [1, 1], [2, 1], [3, 1], [4, 1], [5, 1]]);
+});
+
+test('a larger brush stays continuous under sparse movement, not just at the two sampled endpoints', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  editor.setBrushSize(3);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[2, 2], [2, 6]]);
+  release(window, canvas, cellSize, [2, 6]);
+
+  const expected = new Map();
+  for (const [x, y] of gridLineCells(2, 2, 2, 6)) {
+    for (const cell of brushCells({ x, y, size: 3, width: 20, height: 20 })) {
+      expected.set(`${cell[0]},${cell[1]}`, cell);
+    }
+  }
+  assert.deepEqual(onStroke.calls[0].cells, sortCells(Array.from(expected.values())));
+});
+
+test('a backtracked/repeated sparse path still normalizes to the deduped set with no duplicates', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog());
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  // Sparse forward jump, then a sparse jump that backtracks entirely over the same span twice.
+  drag(window, canvas, cellSize, [[3, 3], [8, 3], [3, 3], [8, 3]]);
+  release(window, canvas, cellSize, [8, 3]);
+
+  const cells = onStroke.calls[0].cells;
+  const keys = cells.map(([x, y]) => `${x},${y}`);
+  assert.equal(new Set(keys).size, keys.length, 'no duplicate cells in the committed payload');
+  assert.deepEqual(cells, [[3, 3], [4, 3], [5, 3], [6, 3], [7, 3], [8, 3]]);
+});
 
 // --- Shift temporary inversion ---
 
@@ -377,6 +589,93 @@ test('cancelPreview() is callable directly and discards without mutating', () =>
   release(window, canvas, cellSize, [13, 13]);
 
   assert.equal(onStroke.calls.length, 0);
+});
+
+// --- Authoritative-context safety: a level/board change mid-stroke cancels it (10E-FIX defect 2) ---
+
+test('a level change mid-stroke cancels the stroke: the stray pointerup emits nothing', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog({ levelId }));
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[4, 4], [5, 4]]); // accumulate cells under `levelId`
+  editor.setFog(baseFog({ levelId: otherLevelId })); // authoritative context now targets a different level
+  release(window, canvas, cellSize, [5, 4]); // stray pointerup for the now-cancelled stroke
+
+  assert.equal(onStroke.calls.length, 0, 'no stale cells may be committed to the new level');
+});
+
+test('a board-dimension change mid-stroke also cancels the stroke', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog({ levelId, width: 20, height: 20 }));
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[4, 4]]);
+  editor.setFog(baseFog({ levelId, width: 30, height: 30 })); // same level, but now a different shape
+  release(window, canvas, cellSize, [4, 4]);
+
+  assert.equal(onStroke.calls.length, 0);
+});
+
+test('an ordinary same-level fog refresh mid-stroke does NOT cancel the in-progress stroke', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog({ levelId }));
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[4, 4]]);
+  // Same level/dimensions, only the revealed content differs — e.g. another manager's committed
+  // stroke arriving over realtime. This must not discard an unrelated in-progress local stroke.
+  editor.setFog(baseFog({ levelId, revealedRuns: [[0, 0, 1]] }));
+  release(window, canvas, cellSize, [4, 4]);
+
+  assert.equal(onStroke.calls.length, 1);
+  assert.equal(onStroke.calls[0].levelId, levelId);
+});
+
+test('a fresh stroke on the new level works normally after a mid-stroke cancellation', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog({ levelId }));
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[4, 4], [5, 4]]);
+  editor.setFog(baseFog({ levelId: otherLevelId }));
+  release(window, canvas, cellSize, [5, 4]); // cancelled: emits nothing
+
+  drag(window, canvas, cellSize, [[9, 9]]);
+  release(window, canvas, cellSize, [9, 9]);
+
+  assert.equal(onStroke.calls.length, 1);
+  assert.deepEqual(onStroke.calls[0], { purpose: 'fog', levelId: otherLevelId, mode: 'reveal', cells: [[9, 9]] });
+});
+
+test('no stale cells from the cancelled stroke survive into the fresh stroke on the new level', () => {
+  const { window, frame, grid, cellSize } = buildBoard();
+  const onStroke = strokesRecorder();
+  const editor = createFogEditor({ frame, grid, onStroke });
+  editor.setFog(baseFog({ levelId }));
+  editor.setActive(true);
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[1, 1], [2, 1]]); // old-level cells that must never resurface
+  editor.setFog(baseFog({ levelId: otherLevelId }));
+  release(window, canvas, cellSize, [2, 1]);
+
+  drag(window, canvas, cellSize, [[10, 10]]);
+  release(window, canvas, cellSize, [10, 10]);
+
+  assert.deepEqual(onStroke.calls[0].cells, [[10, 10]], 'only the fresh stroke\'s own cell, no carry-over from the cancelled one');
 });
 
 // --- Named-area selection interaction ---

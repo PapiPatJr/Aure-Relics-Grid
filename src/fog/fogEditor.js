@@ -23,6 +23,22 @@
  * `fogMask.brushCells`, and dedup/ordering reuses `fogMask.collapseCells`, so this module and the
  * server's own canonicalization (`private.fog_canonical_cells`) agree on what a stroke contains.
  *
+ * Sparse pointer sampling (10E-FIX defect 1): browsers coalesce/drop `pointermove` events under
+ * fast motion, so two consecutive samples can land on non-adjacent grid cells. `gridLineCells`
+ * (a standard integer Bresenham walk) reconstructs every grid cell the pointer's path logically
+ * crossed between the previous sampled cell and the new one, and a brush is applied at every one
+ * of those cells — never just the two sampled endpoints. This keeps a fast flick and a slow,
+ * densely-sampled drag along the same route producing the same painted path.
+ *
+ * Authoritative-context safety (10E-FIX defect 2): a stroke captures the level identity and board
+ * dimensions it began under. If `setFog()` delivers a new authoritative projection for a
+ * *different* level (or a differently-shaped board) while a stroke is active, the local cells
+ * accumulated so far were addressed against a context that no longer exists — carrying them
+ * forward and re-addressing them to the new level would be exactly the "reveal unintended cells"
+ * failure mode design §13.2 forbids. The in-progress stroke is discarded (never committed, never
+ * migrated) the moment such a change arrives; a later stray pointer release naturally emits
+ * nothing because there is no active stroke left for it to complete.
+ *
  * Shift inversion (design §5.1): Reveal+Shift behaves as Hide and Hide+Shift behaves as Reveal.
  * Because one committed stroke is one mutation with a single `mode`, this implementation samples
  * the Shift key exactly once, at `pointerdown`, and that stroke's effective mode is fixed for its
@@ -73,6 +89,39 @@ function clamp01(value) {
 }
 
 /**
+ * Standard integer Bresenham line walk from `(x0, y0)` to `(x1, y1)` inclusive of both endpoints.
+ * Deterministic for horizontal, vertical, exact-diagonal, and arbitrary-slope movement in any
+ * direction (reversing the endpoints reverses the emitted order, not the set of cells). Exported
+ * for direct unit coverage; the only caller is `addBrushAt`'s path interpolation below.
+ * @param {number} x0
+ * @param {number} y0
+ * @param {number} x1
+ * @param {number} y1
+ * @returns {number[][]}
+ */
+export function gridLineCells(x0, y0, x1, y1) {
+  const cells = [];
+  const dx = Math.abs(x1 - x0);
+  const dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  let x = x0;
+  let y = y0;
+  // A finite grid path can never require more steps than the board's own cell count; this bound
+  // only guards against a caller passing non-finite/absurd coordinates and is never reached for
+  // any real pointer-derived cell pair.
+  for (let guard = 0; guard < 1_000_000; guard += 1) {
+    cells.push([x, y]);
+    if (x === x1 && y === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x += sx; }
+    if (e2 <= dx) { err += dx; y += sy; }
+  }
+  return cells;
+}
+
+/**
  * @param {{ frame: HTMLElement, grid: HTMLElement, onStroke: (stroke: object) => void }} args
  *   `frame` is `.grid-frame` (the overlay canvas is attached here, never inside `#grid`, so it
  *   never disturbs the legacy CSS-grid children). `grid` is `#grid`, used only to read
@@ -108,6 +157,10 @@ export function createFogEditor({ frame, grid, onStroke }) {
   let strokePointerId = null;
   let strokeEffectiveMode = 'reveal';
   let strokeCells = new Map();
+  let strokeLastCell = null; // last sampled grid cell, for path interpolation between samples
+  let strokeLevelId = null; // authoritative context the stroke began under (10E-FIX defect 2)
+  let strokeWidth = 0;
+  let strokeHeight = 0;
 
   function ctx2d() {
     return typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
@@ -166,12 +219,25 @@ export function createFogEditor({ frame, grid, onStroke }) {
     return [x, y];
   }
 
-  function addBrushAt(cell) {
-    if (!cell) return;
-    const [x, y] = cell;
+  function applyBrush(x, y) {
     for (const painted of brushCells({ x, y, size: brushSize, width: decoded.width, height: decoded.height })) {
       strokeCells.set(`${painted[0]},${painted[1]}`, painted);
     }
+  }
+
+  /** Apply the current brush at `cell`, and — if a previous sample exists for this stroke — at
+   * every grid cell `gridLineCells` reconstructs between that previous sample and `cell`, so a
+   * sparse/coalesced pointermove still paints a continuous path (10E-FIX defect 1). */
+  function addBrushAt(cell) {
+    if (!cell) return;
+    if (strokeLastCell) {
+      for (const [x, y] of gridLineCells(strokeLastCell[0], strokeLastCell[1], cell[0], cell[1])) {
+        applyBrush(x, y);
+      }
+    } else {
+      applyBrush(cell[0], cell[1]);
+    }
+    strokeLastCell = cell;
   }
 
   function releasePointerCaptureSafely() {
@@ -188,6 +254,10 @@ export function createFogEditor({ frame, grid, onStroke }) {
     strokeActive = false;
     strokePointerId = null;
     strokeCells = new Map();
+    strokeLastCell = null;
+    strokeLevelId = null;
+    strokeWidth = 0;
+    strokeHeight = 0;
   }
 
   /** Discard any uncommitted preview without ever calling `onStroke` (design §5.3/§13.1, plan
@@ -207,7 +277,9 @@ export function createFogEditor({ frame, grid, onStroke }) {
     // 3.10 / 10E instructions §10): sort by row then column.
     cells.sort((a, b) => (a[1] - b[1]) || (a[0] - b[0]));
     const effectiveMode = strokeEffectiveMode;
-    const levelId = decoded.levelId;
+    const levelId = strokeLevelId; // the context this stroke actually began under, never the
+    // possibly-since-changed `decoded.levelId` (10E-FIX defect 2) — though by this point they are
+    // always equal, because setFog() would already have cancelled the stroke on any mismatch.
     releasePointerCaptureSafely();
     resetStroke();
     redraw();
@@ -225,6 +297,10 @@ export function createFogEditor({ frame, grid, onStroke }) {
     strokePointerId = event.pointerId ?? null;
     strokeEffectiveMode = shiftHeld ? invertMode(mode) : mode; // locked for this stroke's duration
     strokeCells = new Map();
+    strokeLastCell = null;
+    strokeLevelId = decoded.levelId; // context this stroke is only ever valid under (defect 2)
+    strokeWidth = decoded.width;
+    strokeHeight = decoded.height;
     addBrushAt(pointToCell(event.clientX, event.clientY));
     redraw();
     event.preventDefault();
@@ -287,10 +363,20 @@ export function createFogEditor({ frame, grid, onStroke }) {
 
   return {
     /** Feed the latest authoritative manager `fog` projection (Task 1/2 shape). Presentation
-     * only: never mutates live fog, only what the editor draws and what bounds it paints within. */
+     * only: never mutates live fog, only what the editor draws and what bounds it paints within.
+     *
+     * If a stroke is active and this new projection targets a different level or a differently
+     * shaped board than the one the stroke began under, the stroke is discarded rather than
+     * silently re-addressed to the new context (10E-FIX defect 2) — its accumulated cells were
+     * only ever meaningful under the context captured at `pointerdown`. */
     setFog(fog) {
-      rawFog = fog ?? null;
-      decoded = rawFog ? decodeRevealedRuns(rawFog) : EMPTY_DECODED;
+      const nextRawFog = fog ?? null;
+      const nextDecoded = nextRawFog ? decodeRevealedRuns(nextRawFog) : EMPTY_DECODED;
+      if (strokeActive && (nextDecoded.levelId !== strokeLevelId || nextDecoded.width !== strokeWidth || nextDecoded.height !== strokeHeight)) {
+        cancelPreview();
+      }
+      rawFog = nextRawFog;
+      decoded = nextDecoded;
       syncGeometry();
       redraw();
     },

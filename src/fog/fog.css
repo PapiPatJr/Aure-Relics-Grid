@@ -59,11 +59,22 @@
  * Mode must not intercept normal board interaction at all). Concealment/frontier/preview pixels
  * are drawn by JS (`renderManagementFog`), never by a CSS color/opacity/filter rule here, the same
  * separation `.fog-player-canvas` above already keeps.
+ *
+ * No `touch-action` override (10E-FIX defect 3): design §6 requires board pan/zoom to remain
+ * available while Fog Mode is active, and this overlay covers the entire board, not one small
+ * draggable target — unlike `.freeform-terrain` in style.css, which sets `touch-action: none` only
+ * on the individual object actually being touch-dragged. A blanket `touch-action: none` here would
+ * disable native touch panning/pinch-zoom over the whole board for as long as Fog Mode is active,
+ * which is exactly what QA reproduced. Leaving `touch-action` at its default `auto` lets the
+ * browser take over an in-progress touch gesture as a scroll/pan whenever it recognizes one; when
+ * it does, it fires `pointercancel` at the canvas, which `fogEditor.js` already handles by
+ * discarding the uncommitted stroke without emitting `onStroke` — the exact same path Escape and
+ * mode-exit use. Fog painting and native touch navigation coexist through that existing cancel
+ * path rather than a second gesture-arbitration system here.
  */
 .fog-editor-canvas {
   position: absolute;
   z-index: 5;
-  touch-action: none;
   image-rendering: -moz-crisp-edges;
   image-rendering: -webkit-crisp-edges;
   image-rendering: pixelated;

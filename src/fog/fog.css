@@ -9,6 +9,17 @@
  *
  * The DM fog-management overlay/frontier (renderManagementFog) has no styling here yet — it is
  * not wired into any DM UI in this package (Issue #10E/10F).
+ *
+ * `.fog-player-canvas`'s `image-rendering` IS part of the security boundary, unlike every other
+ * rule here (10D-FIX): the canvas is always backed at exactly one native pixel per board cell
+ * (src/fog/fogRenderer.js buildPlayerFogStage) and then displayed at whatever CSS size the layout
+ * needs, which is almost never an exact integer multiple of the board's cell count. Without a
+ * pinned nearest-neighbor scale, the browser's default smoothed magnification blends each opaque
+ * fog pixel with its transparent revealed-cell neighbor at the boundary, leaking a sliver of
+ * whatever sits underneath into a cell that must stay fully hidden. `pixelated` is a reliably
+ * filter-free nearest-neighbor magnification in every evergreen browser, so a destination pixel
+ * always samples exactly one source pixel — never a blend of opaque and transparent — regardless
+ * of the CSS/board scale ratio. See tests/e2e/fog-pixel.spec.js for the regression.
  */
 
 .fog-player-stage {
@@ -33,4 +44,7 @@
   display: block;
   width: 100%;
   height: 100%;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: -webkit-crisp-edges;
+  image-rendering: pixelated;
 }

@@ -135,8 +135,11 @@ test('a player-shaped view carrying fog renders a sized .fog-player-stage', () =
   assert.ok(stage, 'fog stage is rendered');
   const canvas = stage.querySelector('canvas.fog-player-canvas');
   assert.ok(canvas);
-  assert.equal(canvas.width, 5 * 32);
-  assert.equal(canvas.height, 4 * 32);
+  // 10D-FIX: one native canvas pixel per board cell, scaled up to display size by CSS
+  // (fog.css `image-rendering: pixelated`) rather than baked into the canvas's own resolution —
+  // see src/fog/fogRenderer.js's module docstring for why.
+  assert.equal(canvas.width, 5);
+  assert.equal(canvas.height, 4);
 });
 
 test('a view with no fog (fog: null, existing Issue #9 sessions) renders no fog stage at all', () => {

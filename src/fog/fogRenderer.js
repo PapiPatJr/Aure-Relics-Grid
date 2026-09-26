@@ -19,11 +19,37 @@
  * `renderManagementFog` exists here (per plan Task 4.5) because it shares mask decoding with the
  * player renderer, but nothing in this package wires it into the DM board yet — that is Issue
  * #10E/10F's Fog Mode editor/controller, explicitly out of scope for this package.
+ *
+ * Scaled-canvas leak fix (10D-FIX): a `<canvas>` element's backing pixel buffer and its CSS
+ * display size are independent — the browser rasterizes/scales the buffer to fit however CSS
+ * sized the element. QA found that giving the canvas a *larger* native resolution than its
+ * display size (the previous `cellSize`-per-cell backing buffer, e.g. 6400x6400 for a 200x200
+ * board shown at ~303 CSS px) makes that a *minification* scale, and browsers minify raster
+ * content with box/mipmap-style filtering that averages multiple source pixels — including
+ * averaging an opaque fog pixel with an adjacent fully-transparent revealed pixel — into a single
+ * partially-transparent destination pixel. That partial alpha is exactly how the substrate color
+ * bled into what must stay a fully opaque hidden cell, and it reproduces at any CSS size that
+ * isn't an exact integer multiple of the board dimensions, not only the reported 303x303 case.
+ *
+ * `buildPlayerFogStage` now always backs the canvas with exactly one native pixel per board cell
+ * (`canvas.width = decoded.width`, `canvas.height = decoded.height`), which is always at least as
+ * small as any real on-screen board size. That guarantees the browser is always *magnifying*, and
+ * `fog.css` pairs this with `image-rendering: pixelated` on `.fog-player-canvas`, which is a
+ * reliably-specified, filter-free nearest-neighbor scale for magnification in every evergreen
+ * browser: each destination pixel samples exactly one source pixel, so no destination pixel can
+ * ever be a blend of an opaque and a transparent source pixel, at any scale ratio. `renderPlayerFog`
+ * itself still accepts a general `cellSize` for pure-function testing/future callers (see below);
+ * `buildPlayerFogStage` simply always calls it with `cellSize: 1`, matching the canvas's own
+ * one-pixel-per-cell backing resolution.
  */
 
 import { decodeRevealedRuns, frontierSegments } from './fogMask.js';
 
-/** Matches the legacy board's `--cell-size` (style.css `:root`) so a future shared-art layer aligns. */
+/** Matches the legacy board's `--cell-size` (style.css `:root`) so a future shared-art layer
+ * aligns. Only used as `renderPlayerFog`/`renderManagementFog`'s default *drawing-unit* size for
+ * direct/general-purpose callers (see `tests/fog-renderer.test.js`) — `buildPlayerFogStage`'s
+ * actual DOM canvas is always backed at exactly one native pixel per cell regardless of this
+ * constant (10D-FIX; see module docstring). */
 export const DEFAULT_CELL_SIZE = 32;
 
 /** Dark charcoal/black fantasy concealment (design §9) — always fully opaque, never a fixed
@@ -153,14 +179,23 @@ export function renderManagementFog(context, fog, { cellSize = DEFAULT_CELL_SIZE
  * optional native canvas backend, as in this project's unit tests), the canvas element is still
  * created and correctly sized, but nothing is drawn — never "everything is drawn", never "fall
  * back to unmasked". `renderPlayerFog` itself is covered directly against a fake context object
- * for the actual pixel-level fail-closed contract; see `tests/fog-renderer.test.js`.
+ * for the actual pixel-level fail-closed contract; see `tests/fog-renderer.test.js`. The scaled-
+ * display leak this function must never reintroduce (10D-FIX) is instead covered by a real-browser
+ * screenshot regression: `tests/e2e/fog-pixel.spec.js`.
+ *
+ * The canvas backing resolution is deliberately always exactly one pixel per board cell — never
+ * `cellSize`-scaled — so the browser only ever *magnifies* it to fit the page (see module
+ * docstring for why that direction of scaling, paired with `fog.css`'s
+ * `image-rendering: pixelated`, is what actually prevents interpolation from leaking the
+ * substrate through a hidden cell). There is intentionally no `cellSize` option here; a caller
+ * that wants a different on-screen size controls it with ordinary CSS on the returned stage
+ * element, exactly as `boardViewRenderer.js` and the harness page both already do.
  *
  * @param {Document} doc
  * @param {unknown} fog
- * @param {{ cellSize?: number }} [options]
  * @returns {HTMLElement|null}
  */
-export function buildPlayerFogStage(doc, fog, { cellSize = DEFAULT_CELL_SIZE } = {}) {
+export function buildPlayerFogStage(doc, fog) {
   const decoded = decodeRevealedRuns(fog);
   if (decoded.width === 0 || decoded.height === 0) return null;
 
@@ -175,12 +210,12 @@ export function buildPlayerFogStage(doc, fog, { cellSize = DEFAULT_CELL_SIZE } =
 
   const canvas = doc.createElement('canvas');
   canvas.className = 'fog-player-canvas';
-  canvas.width = decoded.width * cellSize;
-  canvas.height = decoded.height * cellSize;
+  canvas.width = decoded.width;
+  canvas.height = decoded.height;
   stage.appendChild(canvas);
 
   const context = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
-  if (context) renderPlayerFog(context, fog, { cellSize });
+  if (context) renderPlayerFog(context, fog, { cellSize: 1 });
 
   return stage;
 }

@@ -194,8 +194,13 @@ test('buildPlayerFogStage builds a sized stage with a base substrate and one can
   const canvas = stage.querySelector('canvas.fog-player-canvas');
   assert.ok(base);
   assert.ok(canvas);
-  assert.equal(canvas.width, 10 * DEFAULT_CELL_SIZE);
-  assert.equal(canvas.height, 8 * DEFAULT_CELL_SIZE);
+  // 10D-FIX: exactly one native canvas pixel per board cell (never cellSize-scaled) so the
+  // browser only ever magnifies the canvas to its CSS display size — see fogRenderer.js's module
+  // docstring and tests/e2e/fog-pixel.spec.js for why that direction of scaling, paired with
+  // fog.css's image-rendering: pixelated, is what prevents interpolation from leaking the
+  // substrate through a hidden cell.
+  assert.equal(canvas.width, 10);
+  assert.equal(canvas.height, 8);
 });
 
 test('buildPlayerFogStage returns null when fog identity/dimensions cannot be trusted at all', () => {

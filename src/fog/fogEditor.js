@@ -25,11 +25,11 @@
  *
  * Sparse pointer sampling (10E-FIX defect 1 / 10E-FIX2): browsers coalesce/drop `pointermove`
  * events under fast motion, so two consecutive samples can land on non-adjacent grid cells.
- * `gridLineCells` (a supercover/grid-traversal walk — see its own docstring for why this is not
- * plain Bresenham) reconstructs every grid cell the pointer's path actually crossed between the
- * previous sampled cell and the new one, and a brush is applied at every one of those cells —
- * never just the two sampled endpoints. This keeps a fast flick and a slow, densely-sampled drag
- * along the same route producing the same painted path.
+ * `gridLineCells` (an interior-crossing grid-traversal walk — see its own docstring for why this is
+ * neither plain Bresenham nor a textbook conservative supercover) reconstructs every grid cell the
+ * pointer's path actually crossed between the previous sampled cell and the new one, and a brush is
+ * applied at every one of those cells — never just the two sampled endpoints. This keeps a fast
+ * flick and a slow, densely-sampled drag along the same route producing the same painted path.
  *
  * Authoritative-context safety (10E-FIX defect 2): a stroke captures the level identity and board
  * dimensions it began under. If `setFog()` delivers a new authoritative projection for a
@@ -90,9 +90,12 @@ function clamp01(value) {
 }
 
 /**
- * Supercover grid traversal from cell `(x0, y0)` to cell `(x1, y1)` inclusive of both endpoints:
- * every grid cell the straight continuous line between the two cells' centers actually passes
- * through, not merely a representative raster approximation of it (10E-FIX2).
+ * Interior-crossing grid traversal from cell `(x0, y0)` to cell `(x1, y1)` inclusive of both
+ * endpoints: every grid cell in which the straight continuous line between the two cells' centers
+ * spends a positive-length interval, not merely a representative raster approximation of it
+ * (10E-FIX2), and not a textbook "conservative supercover" either — see the corner-crossing note
+ * below for why a cell touched only at a single zero-length corner point is deliberately excluded
+ * (locked contract, Issue #10E RCA / 10E-FIX3).
  *
  * A prior version of this helper used standard Bresenham, which deliberately picks one
  * "representative" cell per major-axis step and is allowed to skip a cell a real continuous
@@ -103,15 +106,24 @@ function clamp01(value) {
  * all) must produce the same logical painted cell set a hypothetically infinitely-dense sampling
  * of the same path would.
  *
- * The algorithm below is the standard integer supercover/grid-traversal construction: walking from
- * one cell to the next, at each step it asks whether the line crosses the next vertical grid line,
- * the next horizontal grid line, or both at once (an exact corner crossing), by comparing
+ * The algorithm below is the standard integer grid-traversal construction: walking from one cell
+ * to the next, at each step it asks whether the line crosses the next vertical grid line, the next
+ * horizontal grid line, or both at once (an exact corner crossing), by comparing
  * `(1 + 2*ixStep) * ny` against `(1 + 2*iyStep) * nx` — the sign-independent, magnitude-only
  * comparison that is what makes this traversal exactly symmetric under swapping the two endpoints
  * (A→B and B→A always produce the identical *set* of cells, only in reverse order), unlike
- * Bresenham's tie-breaking. Every step moves to an orthogonally- or diagonally-adjacent cell, so
- * the returned path is always fully connected — horizontal, vertical, and exact-diagonal segments
- * degrade to the same simple continuous walk they always were.
+ * Bresenham's tie-breaking. At an exact corner crossing, four cells meet at the single point the
+ * line passes through: the cell before the corner, the cell after it (diagonal from the first), and
+ * the other two — themselves diagonal to each other, orthogonal to each of the first pair — which
+ * the line only ever touches at that zero-length point and never spends any interval inside. This
+ * traversal steps straight from the cell before the corner to the cell after it and excludes both
+ * of those corner-only cells. That is
+ * *narrower* than a textbook conservative supercover, which would include every cell touching the
+ * line at all, corner points included; this traversal is intentionally an interior-crossing walk,
+ * not a supercover, because the locked #10E contract defines path membership as "spends a
+ * positive-length interval inside the cell." Every step moves to an orthogonally- or
+ * diagonally-adjacent cell, so the returned path is always fully connected — horizontal, vertical,
+ * and exact-diagonal segments degrade to the same simple continuous walk they always were.
  *
  * Exported for direct unit coverage; the only caller is `addBrushAt`'s path interpolation below.
  * @param {number} x0

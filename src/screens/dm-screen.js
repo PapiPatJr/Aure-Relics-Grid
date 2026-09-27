@@ -9,7 +9,7 @@ import { deriveDisplayView } from '../board/displayView.js';
 import { renderBoardView } from '../board/boardViewRenderer.js';
 
 /**
- * @param {{ apply: (view: object|null) => void, container: HTMLElement }} options
+ * @param {{ apply: (view: object|null) => void, container: HTMLElement, onPresentationModeChange?: (mode: 'dm'|'player') => void }} options
  * @returns {{
  *   activate(): void,
  *   deactivate(): void,
@@ -18,7 +18,7 @@ import { renderBoardView } from '../board/boardViewRenderer.js';
  *   setPresentationMode(mode: 'dm'|'player'): void,
  * }}
  */
-export function createDmScreen({ apply, container }) {
+export function createDmScreen({ apply, container, onPresentationModeChange = () => {} }) {
   let presentationMode = 'dm';
   let toggleButton = null;
   let previewPanel = null;
@@ -75,6 +75,10 @@ export function createDmScreen({ apply, container }) {
     // never wait for the next realtime snapshot, which may not arrive for a long time (or ever)
     // if nothing else about the session changes.
     if (hasRenderedView) renderStoredView();
+    // Purely local presentation notice for a caller-owned module (Issue #10F's fogController) to
+    // suspend/restore its own DM-only editing UI. Never hydrates/mutates/subscribes — this module
+    // still imports nothing that could.
+    onPresentationModeChange(mode);
   }
 
   return {

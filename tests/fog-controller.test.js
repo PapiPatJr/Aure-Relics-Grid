@@ -1,0 +1,860 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
+import { createSyncEngine } from '../src/realtime/engine.js';
+import { createFakeAdapter } from '../src/realtime/fakeAdapter.js';
+import { createFogController } from '../src/fog/fogController.js';
+
+const SOURCE_PATH = 'src/fog/fogController.js';
+const session = 'aaaaaaaa-1111-4aaa-8aaa-aaaaaaaaaaaa';
+const levelId = 'bbbbbbbb-2222-4bbb-8bbb-bbbbbbbbbbbb';
+const otherLevelId = 'cccccccc-3333-4ccc-8ccc-cccccccccccc';
+const locationId = 'dddddddd-4444-4ddd-8ddd-dddddddddddd';
+const flush = () => new Promise(resolve => setImmediate(resolve));
+
+// --- fixtures ------------------------------------------------------------------------------
+
+function fogProjection(overrides = {}) {
+  return { levelId, width: 20, height: 20, enabled: true, revealedRuns: [], ...overrides };
+}
+
+function fogManagerState(overrides = {}) {
+  return {
+    campaignEnabled: true,
+    locationId,
+    locationOverride: null,
+    levelOverride: null,
+    effectiveEnabled: true,
+    initialized: true,
+    areas: [],
+    levelRevisions: [{ levelId, revision: '1' }],
+    ...overrides,
+  };
+}
+
+function managerView(overrides = {}) {
+  return {
+    sessionId: session,
+    revision: '1',
+    session: { id: session, name: 'Session', status: 'active', activeLevelId: levelId },
+    roundNumber: 1,
+    authority: { canManage: true, ownCharacterId: null },
+    tokens: [],
+    characters: [],
+    initiative: [],
+    dm: { fog: fogManagerState(), tokenDetails: [], notes: [], activity: [] },
+    fog: fogProjection(),
+    ...overrides,
+  };
+}
+
+function playerView(overrides = {}) {
+  return {
+    sessionId: session,
+    revision: '1',
+    session: { id: session, name: 'Session', status: 'active', activeLevelId: levelId },
+    roundNumber: 1,
+    authority: { canManage: false, ownCharacterId: null },
+    tokens: [],
+    characters: [],
+    initiative: [],
+    dm: null,
+    fog: fogProjection(),
+    ...overrides,
+  };
+}
+
+async function buildReadyEngine(appliedRevision = '1') {
+  const adapter = createFakeAdapter();
+  adapter.setHydrateResult(async () => ({ sessionId: session, revision: appliedRevision }));
+  const engine = createSyncEngine(adapter);
+  engine.subscribe(session, {});
+  await flush();
+  return { engine, adapter };
+}
+
+function buildBoard({ width = 20, height = 20, cellSize = 20 } = {}) {
+  const dom = new JSDOM('<!doctype html><div class="grid-frame"><div id="grid"></div></div><div id="sidebar"></div>');
+  const { window } = dom;
+  const frame = window.document.querySelector('.grid-frame');
+  const grid = window.document.getElementById('grid');
+  const host = window.document.getElementById('sidebar');
+
+  frame.getBoundingClientRect = () => ({ left: 0, top: 0, right: width * cellSize, bottom: height * cellSize, width: width * cellSize, height: height * cellSize });
+  grid.getBoundingClientRect = () => ({ left: 0, top: 0, right: width * cellSize, bottom: height * cellSize, width: width * cellSize, height: height * cellSize });
+
+  return { dom, window, frame, grid, host, cellSize };
+}
+
+function pointerEvent(win, type, { clientX = 0, clientY = 0, button = 0, pointerId = 1 } = {}) {
+  const event = new win.MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY, button });
+  Object.defineProperty(event, 'pointerId', { value: pointerId });
+  return event;
+}
+
+function clientPointFor(cellSize, x, y) {
+  return { clientX: x * cellSize + cellSize / 2, clientY: y * cellSize + cellSize / 2 };
+}
+
+function drag(window, canvas, cellSize, cells) {
+  const [first, ...rest] = cells;
+  canvas.dispatchEvent(pointerEvent(window, 'pointerdown', clientPointFor(cellSize, ...first)));
+  for (const cell of rest) canvas.dispatchEvent(pointerEvent(window, 'pointermove', clientPointFor(cellSize, ...cell)));
+}
+
+function release(window, canvas, cellSize, cell) {
+  canvas.dispatchEvent(pointerEvent(window, 'pointerup', clientPointFor(cellSize, ...cell)));
+}
+
+function confirmSpy(result = true) {
+  const calls = [];
+  const fn = request => { calls.push(request); return result; };
+  fn.calls = calls;
+  return fn;
+}
+
+function resultSpy() {
+  const calls = [];
+  const fn = result => calls.push(result);
+  fn.calls = calls;
+  return fn;
+}
+
+/** Standard harness: real engine + fake adapter, a JSDOM board/host pair, and a view holder that
+ * mirrors how app.js keeps `realtimeBoardView` and its `getView` closure in sync — every
+ * `setView(view)` call updates both what `getView()` returns and what `controller.render()` sees,
+ * exactly as `renderCurrent()` in app.js does for `realtimeBoardView`. */
+function buildHarness({ appliedRevision = '1', confirmResult = true } = {}) {
+  return (async () => {
+    const { engine, adapter } = await buildReadyEngine(appliedRevision);
+    const { window, frame, grid, host, cellSize } = buildBoard();
+    let currentView = null;
+    const getSessionId = () => session;
+    const getView = () => currentView;
+    const confirmAction = confirmSpy(confirmResult);
+    const onResult = resultSpy();
+    const controller = createFogController({ engine, getSessionId, getView, frame, grid, host, confirmAction, onResult });
+    function setView(view) {
+      currentView = view;
+      controller.render(view);
+    }
+    return { engine, adapter, window, frame, grid, host, cellSize, controller, setView, confirmAction, onResult, getView };
+  })();
+}
+
+function paintCommands(adapter) {
+  return adapter.calls.mutate.filter(c => c.command.type === 'fog.paint');
+}
+
+function commandsOfType(adapter, type) {
+  return adapter.calls.mutate.filter(c => c.command.type === type);
+}
+
+// --- structural guarantees -------------------------------------------------------------------
+
+test('structural guarantee: fogController.js never creates a second realtime engine, adapter, subscription, or Supabase client', () => {
+  const source = readFileSync(SOURCE_PATH, 'utf8');
+  // A JSDoc type reference to createSyncEngine's return type (documenting the injected `engine`
+  // param, exactly like fogMutations.js already does) is fine; actually importing or calling it
+  // to build a second engine is not.
+  assert.doesNotMatch(source, /import \{[^}]*createSyncEngine[^}]*\}/);
+  assert.doesNotMatch(source, /\bcreateSyncEngine\(/);
+  const forbidden = ['createSupabaseSyncAdapter', 'createSessionLifecycle', 'getSupabaseClient', 'createClient', 'supabase-js', '.subscribe(', 'new WebSocket', 'channel('];
+  for (const token of forbidden) {
+    assert.ok(!source.includes(token), `${SOURCE_PATH} must not reference "${token}"`);
+  }
+});
+
+test('structural guarantee: fogController.js composes createFogMutationBridge and createFogEditor rather than reimplementing them', () => {
+  const source = readFileSync(SOURCE_PATH, 'utf8');
+  assert.match(source, /import \{ createFogMutationBridge \} from '\.\/fogMutations\.js';/);
+  assert.match(source, /import \{ createFogEditor \} from '\.\/fogEditor\.js';/);
+});
+
+// --- Fog controls render only for manager views -------------------------------------------------
+
+test('Fog controls render only for manager views: hidden/absent for a player-shaped view, visible for a manager view', async () => {
+  const { host, controller, setView } = await buildHarness();
+  controller.activate();
+
+  setView(playerView());
+  let root = host.querySelector('[data-fog-controller]');
+  assert.ok(!root || root.hidden, 'no visible fog controller content for a non-manager view');
+
+  setView(managerView());
+  root = host.querySelector('[data-fog-controller]');
+  assert.ok(root, 'fog controller root must exist for a manager view');
+  assert.equal(root.hidden, false);
+  assert.ok(root.querySelector('[data-fog-action="toggle-fog-mode"]'));
+});
+
+test('render(null) (denied) hides fog controls and never throws', async () => {
+  const { host, controller, setView } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  assert.doesNotThrow(() => setView(null));
+  const root = host.querySelector('[data-fog-controller]');
+  assert.ok(!root || root.hidden);
+});
+
+// --- toolbar exposes the required controls ------------------------------------------------------
+
+test('toolbar exposes Reveal/Hide, brush sizes 1/2/3/5, overlay opacity, named areas, Reveal All, Hide All, Reset, and inheritance settings', async () => {
+  const { host, controller, setView } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  const root = host.querySelector('[data-fog-controller]');
+
+  assert.ok(root.querySelector('[data-fog-action="tool-reveal"]'));
+  assert.ok(root.querySelector('[data-fog-action="tool-hide"]'));
+  for (const size of [1, 2, 3, 5]) assert.ok(root.querySelector(`[data-fog-action="brush-${size}"]`), `brush ${size} control`);
+  assert.ok(root.querySelector('[data-fog-field="opacity"]'));
+  assert.ok(root.querySelector('[data-fog-action="new-area"]'));
+  assert.ok(root.querySelector('[data-fog-action="reveal-all"]'));
+  assert.ok(root.querySelector('[data-fog-action="hide-all"]'));
+  assert.ok(root.querySelector('[data-fog-action="reset"]'));
+  assert.ok(root.querySelector('[data-fog-action="enable-campaign"]'));
+  assert.ok(root.querySelector('[data-fog-action="disable-campaign"]'));
+  assert.ok(root.querySelector('[data-fog-field="location-override"]'));
+  assert.ok(root.querySelector('[data-fog-field="level-override"]'));
+});
+
+// --- Reveal tool / Hide tool / brush sizes --------------------------------------------------------
+
+test('Reveal tool and Hide tool set the editor mode used by the next stroke', async () => {
+  const { window, host, frame, grid, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  const root = host.querySelector('[data-fog-controller]');
+  root.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  root.querySelector('[data-fog-action="tool-hide"]').click();
+  drag(window, canvas, cellSize, [[2, 2]]);
+  release(window, canvas, cellSize, [2, 2]);
+  await flush();
+  assert.equal(paintCommands(adapter).at(-1).command.payload.mode, 'hide');
+
+  root.querySelector('[data-fog-action="tool-reveal"]').click();
+  drag(window, canvas, cellSize, [[3, 3]]);
+  release(window, canvas, cellSize, [3, 3]);
+  await flush();
+  assert.equal(paintCommands(adapter).at(-1).command.payload.mode, 'reveal');
+});
+
+test('brush sizes 1, 2, 3, and 5 are wired to the editor brush and affect the painted stroke footprint', async () => {
+  const { window, host, frame, grid, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  const root = host.querySelector('[data-fog-controller]');
+  root.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  root.querySelector('[data-fog-action="brush-3"]').click();
+  drag(window, canvas, cellSize, [[10, 10]]);
+  release(window, canvas, cellSize, [10, 10]);
+  await flush();
+  assert.equal(paintCommands(adapter).at(-1).command.payload.cells.length, 9); // 3x3
+});
+
+// --- overlay opacity -------------------------------------------------------------------------
+
+test('overlay opacity control forwards to the editor without error and without mutating anything', async () => {
+  const { window, host, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  const root = host.querySelector('[data-fog-controller]');
+  const opacity = root.querySelector('[data-fog-field="opacity"]');
+  opacity.value = '0.4';
+  opacity.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(adapter.calls.mutate.length, 0);
+});
+
+// --- one completed live stroke calls fog.paint exactly once ---------------------------------------
+
+test('one completed live stroke calls fog.paint exactly once, with the explicit stroke levelId', async () => {
+  const { window, host, frame, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[1, 1], [1, 2], [1, 3], [1, 4], [1, 5]]);
+  release(window, canvas, cellSize, [1, 5]);
+  await flush();
+
+  const calls = paintCommands(adapter);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command.payload.levelId, levelId);
+  assert.deepEqual(calls[0].command.payload.cells, [[1, 1], [1, 2], [1, 3], [1, 4], [1, 5]]);
+});
+
+test('no mutation during pointer movement: only pointerup triggers fog.paint, never pointermove', async () => {
+  const { window, host, frame, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[0, 0], [1, 0], [2, 0], [3, 0]]);
+  await flush();
+  assert.equal(adapter.calls.mutate.length, 0, 'no mutation before release');
+
+  release(window, canvas, cellSize, [3, 0]);
+  await flush();
+  assert.equal(paintCommands(adapter).length, 1, 'exactly one mutation after release');
+});
+
+test('a long multi-cell drag is still exactly one mutation opportunity, never one request per cell', async () => {
+  const { window, host, frame, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  const cells = Array.from({ length: 15 }, (_, i) => [i, 0]);
+  drag(window, canvas, cellSize, cells);
+  release(window, canvas, cellSize, [14, 0]);
+  await flush();
+
+  assert.equal(paintCommands(adapter).length, 1);
+  assert.equal(paintCommands(adapter)[0].command.payload.cells.length, 15);
+});
+
+// --- conflicted/failed stroke discards local preview and returns to authoritative state --------------
+
+test('a conflicted stroke rehydrates exactly once, is never retried, and reports conflict via onResult', async () => {
+  const { window, host, frame, cellSize, controller, setView, adapter, onResult } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  const conflict = Object.assign(new Error('stale revision'), { code: '40001' });
+  adapter.setMutateResult(async () => { throw conflict; });
+  const hydrateCallsBefore = adapter.calls.hydrate.length;
+
+  drag(window, canvas, cellSize, [[5, 5]]);
+  release(window, canvas, cellSize, [5, 5]);
+  await flush();
+
+  assert.equal(paintCommands(adapter).length, 1, 'never retried');
+  assert.equal(adapter.calls.hydrate.length, hydrateCallsBefore + 1, 'exactly one recovery hydrate');
+  const report = onResult.calls.find(r => r.type === 'fog.paint');
+  assert.equal(report.ok, false);
+  assert.equal(report.conflict, true);
+});
+
+test('after a conflict, a fresh render(view) with new authoritative fog is accepted without error, and a new stroke still works normally', async () => {
+  const { window, host, frame, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  const conflict = Object.assign(new Error('stale revision'), { code: '40001' });
+  adapter.setMutateResult(async () => { throw conflict; });
+  drag(window, canvas, cellSize, [[5, 5]]);
+  release(window, canvas, cellSize, [5, 5]);
+  await flush();
+
+  // Authoritative rehydration arrives (as app.js would deliver through the normal snapshot path).
+  adapter.setMutateResult(async (id, command) => ({ command }));
+  assert.doesNotThrow(() => setView(managerView({ fog: fogProjection({ revealedRuns: [[5, 5, 6]] }) })));
+
+  drag(window, canvas, cellSize, [[9, 9]]);
+  release(window, canvas, cellSize, [9, 9]);
+  await flush();
+  assert.equal(paintCommands(adapter).length, 2, 'new stroke after recovery still commits normally');
+});
+
+// --- New Area / Edit Area: local until Save --------------------------------------------------------
+
+test('New Area paints/selects cells locally and only creates the area on Save (fog.area.create), never live-painting fog', async () => {
+  const { window, host, frame, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  const root = host.querySelector('[data-fog-controller]');
+  root.querySelector('[data-fog-action="new-area"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[2, 2], [2, 3], [2, 4]]);
+  release(window, canvas, cellSize, [2, 4]);
+  await flush();
+
+  assert.equal(adapter.calls.mutate.length, 0, 'painting/selecting an area never mutates live fog');
+
+  root.querySelector('[data-fog-field="area-name"]').value = 'Starting Room';
+  root.querySelector('[data-fog-field="area-name"]').dispatchEvent(new window.Event('input', { bubbles: true }));
+  root.querySelector('[data-fog-field="area-default"][value="revealed"]').checked = true;
+  root.querySelector('[data-fog-field="area-default"][value="revealed"]').dispatchEvent(new window.Event('change', { bubbles: true }));
+  root.querySelector('[data-fog-action="area-save"]').click();
+  await flush();
+
+  const creates = commandsOfType(adapter, 'fog.area.create');
+  assert.equal(creates.length, 1);
+  assert.equal(creates[0].command.payload.levelId, levelId);
+  assert.equal(creates[0].command.payload.name, 'Starting Room');
+  assert.equal(creates[0].command.payload.revealedByDefault, true);
+  assert.deepEqual(creates[0].command.payload.cells.sort(), [[2, 2], [2, 3], [2, 4]]);
+});
+
+test('Edit Area loads the existing area selection and edits only local selection until Save (fog.area.update)', async () => {
+  const { window, host, frame, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  const area = { id: 'area-1', levelId, name: 'Old Name', cellRuns: [[0, 0, 2]], revealedByDefault: false, status: 'Hidden' };
+  setView(managerView({ dm: { fog: fogManagerState({ areas: [area] }) } }));
+  const root = host.querySelector('[data-fog-controller]');
+
+  root.querySelector('[data-fog-action="area-edit"][data-area-id="area-1"]').click();
+  assert.equal(root.querySelector('[data-fog-field="area-name"]').value, 'Old Name');
+
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+  drag(window, canvas, cellSize, [[5, 5]]);
+  release(window, canvas, cellSize, [5, 5]);
+  await flush();
+  assert.equal(adapter.calls.mutate.length, 0, 'editing selection never mutates until Save');
+
+  root.querySelector('[data-fog-field="area-name"]').value = 'Renamed Room';
+  root.querySelector('[data-fog-field="area-name"]').dispatchEvent(new window.Event('input', { bubbles: true }));
+  root.querySelector('[data-fog-action="area-save"]').click();
+  await flush();
+
+  const updates = commandsOfType(adapter, 'fog.area.update');
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].command.payload.areaId, 'area-1');
+  assert.equal(updates[0].command.payload.name, 'Renamed Room');
+  assert.ok(updates[0].command.payload.cells.some(([x, y]) => x === 5 && y === 5), 'newly painted cell included');
+  assert.ok(updates[0].command.payload.cells.some(([x, y]) => x === 0 && y === 0), 'original loaded cell retained');
+});
+
+test('Cancel Area discards the draft and causes no mutation at all', async () => {
+  const { window, host, frame, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  const root = host.querySelector('[data-fog-controller]');
+  root.querySelector('[data-fog-action="new-area"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+  drag(window, canvas, cellSize, [[1, 1], [1, 2]]);
+  release(window, canvas, cellSize, [1, 2]);
+  await flush();
+
+  root.querySelector('[data-fog-action="area-cancel"]').click();
+  await flush();
+
+  assert.equal(adapter.calls.mutate.length, 0);
+});
+
+// --- existing named-area actions ------------------------------------------------------------------
+
+test('area status Hidden/Revealed/Mixed is displayed from server-derived status, not recomputed client-side', async () => {
+  const { host, controller, setView } = await buildHarness();
+  controller.activate();
+  const areas = [
+    { id: 'a-hidden', levelId, name: 'A', cellRuns: [], revealedByDefault: false, status: 'Hidden' },
+    { id: 'a-revealed', levelId, name: 'B', cellRuns: [], revealedByDefault: true, status: 'Revealed' },
+    { id: 'a-mixed', levelId, name: 'C', cellRuns: [], revealedByDefault: false, status: 'Mixed' },
+  ];
+  setView(managerView({ dm: { fog: fogManagerState({ areas }) } }));
+  const root = host.querySelector('[data-fog-controller]');
+
+  for (const area of areas) {
+    const row = root.querySelector(`[data-area-id="${area.id}"]`);
+    assert.ok(row, `row for ${area.id}`);
+    assert.match(row.textContent, new RegExp(area.status));
+  }
+});
+
+test('Reveal Area has no confirmation and calls fog.area.setVisibility with revealed:true', async () => {
+  const { host, controller, setView, adapter, confirmAction } = await buildHarness();
+  controller.activate();
+  const area = { id: 'area-1', levelId, name: 'Room', cellRuns: [], revealedByDefault: false, status: 'Hidden' };
+  setView(managerView({ dm: { fog: fogManagerState({ areas: [area] }) } }));
+  const root = host.querySelector('[data-fog-controller]');
+
+  root.querySelector('[data-fog-action="area-reveal"][data-area-id="area-1"]').click();
+  await flush();
+
+  assert.equal(confirmAction.calls.length, 0, 'Reveal Area must never confirm');
+  const calls = commandsOfType(adapter, 'fog.area.setVisibility');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command.payload.areaId, 'area-1');
+  assert.equal(calls[0].command.payload.revealed, true);
+});
+
+test('Hide Area has no confirmation and calls fog.area.setVisibility with revealed:false', async () => {
+  const { host, controller, setView, adapter, confirmAction } = await buildHarness();
+  controller.activate();
+  const area = { id: 'area-1', levelId, name: 'Room', cellRuns: [], revealedByDefault: true, status: 'Revealed' };
+  setView(managerView({ dm: { fog: fogManagerState({ areas: [area] }) } }));
+  const root = host.querySelector('[data-fog-controller]');
+
+  root.querySelector('[data-fog-action="area-hide"][data-area-id="area-1"]').click();
+  await flush();
+
+  assert.equal(confirmAction.calls.length, 0, 'Hide Area must never confirm');
+  const calls = commandsOfType(adapter, 'fog.area.setVisibility');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command.payload.revealed, false);
+});
+
+test('Delete Area confirms before calling fog.area.delete, and a declined confirmation sends nothing', async () => {
+  const { host, controller, setView, adapter } = await buildHarness({ confirmResult: false });
+  controller.activate();
+  const area = { id: 'area-1', levelId, name: 'Room', cellRuns: [], revealedByDefault: false, status: 'Hidden' };
+  setView(managerView({ dm: { fog: fogManagerState({ areas: [area] }) } }));
+  const root = host.querySelector('[data-fog-controller]');
+
+  root.querySelector('[data-fog-action="area-delete"][data-area-id="area-1"]').click();
+  await flush();
+
+  assert.equal(commandsOfType(adapter, 'fog.area.delete').length, 0, 'declined confirmation sends no mutation');
+});
+
+test('Delete Area proceeds to fog.area.delete once confirmed', async () => {
+  const { host, controller, setView, adapter } = await buildHarness({ confirmResult: true });
+  controller.activate();
+  const area = { id: 'area-1', levelId, name: 'Room', cellRuns: [], revealedByDefault: false, status: 'Hidden' };
+  setView(managerView({ dm: { fog: fogManagerState({ areas: [area] }) } }));
+  const root = host.querySelector('[data-fog-controller]');
+
+  root.querySelector('[data-fog-action="area-delete"][data-area-id="area-1"]').click();
+  await flush();
+
+  const calls = commandsOfType(adapter, 'fog.area.delete');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command.payload.areaId, 'area-1');
+});
+
+// --- broad actions: Reveal All / Hide All / Reset require confirmation ----------------------------
+
+test('Reveal All requires confirmation before fog.revealAll, and a declined confirmation sends nothing', async () => {
+  const { host, controller, setView, adapter, confirmAction } = await buildHarness({ confirmResult: false });
+  controller.activate();
+  setView(managerView());
+  const root = host.querySelector('[data-fog-controller]');
+
+  root.querySelector('[data-fog-action="reveal-all"]').click();
+  await flush();
+
+  assert.equal(confirmAction.calls.length, 1);
+  assert.equal(commandsOfType(adapter, 'fog.revealAll').length, 0);
+});
+
+test('Reveal All proceeds once confirmed', async () => {
+  const { host, controller, setView, adapter } = await buildHarness({ confirmResult: true });
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="reveal-all"]').click();
+  await flush();
+  const calls = commandsOfType(adapter, 'fog.revealAll');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command.payload.levelId, levelId);
+});
+
+test('Hide All requires confirmation before fog.hideAll', async () => {
+  const { host, controller, setView, adapter, confirmAction } = await buildHarness({ confirmResult: false });
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="hide-all"]').click();
+  await flush();
+  assert.equal(confirmAction.calls.length, 1);
+  assert.equal(commandsOfType(adapter, 'fog.hideAll').length, 0);
+});
+
+test('Hide All proceeds once confirmed', async () => {
+  const { host, controller, setView, adapter } = await buildHarness({ confirmResult: true });
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="hide-all"]').click();
+  await flush();
+  assert.equal(commandsOfType(adapter, 'fog.hideAll').length, 1);
+});
+
+test('Reset requires confirmation before fog.resetDefaults', async () => {
+  const { host, controller, setView, adapter, confirmAction } = await buildHarness({ confirmResult: false });
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="reset"]').click();
+  await flush();
+  assert.equal(confirmAction.calls.length, 1);
+  assert.equal(commandsOfType(adapter, 'fog.resetDefaults').length, 0);
+});
+
+test('Reset proceeds once confirmed', async () => {
+  const { host, controller, setView, adapter } = await buildHarness({ confirmResult: true });
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="reset"]').click();
+  await flush();
+  assert.equal(commandsOfType(adapter, 'fog.resetDefaults').length, 1);
+});
+
+test('broad-action confirmation copy is action-specific, never a generic "Clear Fog" wording', async () => {
+  const { host, controller, setView, confirmAction } = await buildHarness({ confirmResult: false });
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="reveal-all"]').click();
+  host.querySelector('[data-fog-action="hide-all"]').click();
+  host.querySelector('[data-fog-action="reset"]').click();
+  await flush();
+
+  const messages = confirmAction.calls.map(c => c.message);
+  assert.equal(messages.length, 3);
+  const unique = new Set(messages);
+  assert.equal(unique.size, 3, 'each broad action must use distinct, action-specific wording');
+  for (const message of messages) assert.doesNotMatch(message, /clear fog/i);
+});
+
+// --- Disable Fog / Enable Fog ------------------------------------------------------------------
+
+test('Disable Fog always requires confirmation, and a declined confirmation sends nothing', async () => {
+  const { host, controller, setView, adapter, confirmAction } = await buildHarness({ confirmResult: false });
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="disable-campaign"]').click();
+  await flush();
+
+  assert.equal(confirmAction.calls.length, 1);
+  assert.equal(commandsOfType(adapter, 'fog.setCampaignEnabled').length, 0);
+});
+
+test("Disable Fog confirmation copy communicates base-map exposure, that DM-hidden objects stay hidden, and that the stored mask is preserved — never implying hidden objects become revealed", async () => {
+  const { host, controller, setView, confirmAction } = await buildHarness({ confirmResult: false });
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="disable-campaign"]').click();
+  await flush();
+
+  const { message } = confirmAction.calls[0];
+  assert.match(message, /base map/i);
+  assert.match(message, /visible/i);
+  assert.match(message, /hidden/i);
+  assert.match(message, /preserved|restore/i);
+  assert.doesNotMatch(message, /hidden (objects|creatures|tokens).{0,40}(become|are)?\s*(revealed|visible)/i);
+});
+
+test('Disable Fog proceeds to fog.setCampaignEnabled(false) once confirmed', async () => {
+  const { host, controller, setView, adapter } = await buildHarness({ confirmResult: true });
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="disable-campaign"]').click();
+  await flush();
+  const calls = commandsOfType(adapter, 'fog.setCampaignEnabled');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command.payload.enabled, false);
+});
+
+test('Enable Fog may proceed without the exposure confirmation because it restores the stored mask', async () => {
+  const { host, controller, setView, adapter, confirmAction } = await buildHarness();
+  controller.activate();
+  setView(managerView({ dm: { fog: fogManagerState({ campaignEnabled: false }) } }));
+  host.querySelector('[data-fog-action="enable-campaign"]').click();
+  await flush();
+
+  assert.equal(confirmAction.calls.length, 0, 'Enable Fog must not confirm');
+  const calls = commandsOfType(adapter, 'fog.setCampaignEnabled');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command.payload.enabled, true);
+});
+
+test('toggling fog enable/disable never deletes or resets stored cells: only fog.setCampaignEnabled is sent, never resetDefaults/hideAll/revealAll', async () => {
+  const { host, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView({ dm: { fog: fogManagerState({ campaignEnabled: false }) } }));
+  host.querySelector('[data-fog-action="enable-campaign"]').click();
+  await flush();
+  setView(managerView({ dm: { fog: fogManagerState({ campaignEnabled: true }) } }));
+  host.querySelector('[data-fog-action="disable-campaign"]').click();
+  await flush();
+
+  assert.equal(commandsOfType(adapter, 'fog.resetDefaults').length, 0);
+  assert.equal(commandsOfType(adapter, 'fog.hideAll').length, 0);
+  assert.equal(commandsOfType(adapter, 'fog.revealAll').length, 0);
+});
+
+// --- inheritance settings --------------------------------------------------------------------
+
+test('campaign setting is On/Off, reflected from dm.fog.campaignEnabled', async () => {
+  const { host, controller, setView } = await buildHarness();
+  controller.activate();
+  setView(managerView({ dm: { fog: fogManagerState({ campaignEnabled: true }) } }));
+  let root = host.querySelector('[data-fog-controller]');
+  assert.match(root.querySelector('[data-fog-status="campaign"]').textContent, /on/i);
+
+  setView(managerView({ dm: { fog: fogManagerState({ campaignEnabled: false }) } }));
+  root = host.querySelector('[data-fog-controller]');
+  assert.match(root.querySelector('[data-fog-status="campaign"]').textContent, /off/i);
+});
+
+test('location setting is On/Off/Inherit and mutates via fog.setLocationOverride with the explicit locationId', async () => {
+  const { host, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView({ dm: { fog: fogManagerState({ locationOverride: null }) } }));
+  const root = host.querySelector('[data-fog-controller]');
+  const select = root.querySelector('[data-fog-field="location-override"]');
+  assert.equal(select.value, 'inherit');
+
+  select.value = 'on';
+  select.dispatchEvent(new (host.ownerDocument.defaultView).Event('change', { bubbles: true }));
+  await flush();
+  let calls = commandsOfType(adapter, 'fog.setLocationOverride');
+  assert.equal(calls.at(-1).command.payload.locationId, locationId);
+  assert.equal(calls.at(-1).command.payload.enabled, true);
+
+  select.value = 'off';
+  select.dispatchEvent(new (host.ownerDocument.defaultView).Event('change', { bubbles: true }));
+  await flush();
+  calls = commandsOfType(adapter, 'fog.setLocationOverride');
+  assert.equal(calls.at(-1).command.payload.enabled, false);
+
+  select.value = 'inherit';
+  select.dispatchEvent(new (host.ownerDocument.defaultView).Event('change', { bubbles: true }));
+  await flush();
+  calls = commandsOfType(adapter, 'fog.setLocationOverride');
+  assert.equal(calls.at(-1).command.payload.enabled, null);
+});
+
+test('level setting is On/Off/Inherit and mutates via fog.setLevelOverride with the explicit levelId', async () => {
+  const { host, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView({ dm: { fog: fogManagerState({ levelOverride: true }) } }));
+  const root = host.querySelector('[data-fog-controller]');
+  const select = root.querySelector('[data-fog-field="level-override"]');
+  assert.equal(select.value, 'on');
+
+  select.value = 'off';
+  select.dispatchEvent(new (host.ownerDocument.defaultView).Event('change', { bubbles: true }));
+  await flush();
+  const calls = commandsOfType(adapter, 'fog.setLevelOverride');
+  assert.equal(calls.at(-1).command.payload.levelId, levelId);
+  assert.equal(calls.at(-1).command.payload.enabled, false);
+});
+
+// --- explicit levelId / no DOM inference for mutation target ---------------------------------
+
+test('explicit manager levelId is used for broad actions, and it is read from the latest rendered view data, never inferred from DOM', async () => {
+  const { host, controller, setView, adapter } = await buildHarness({ confirmResult: true });
+  controller.activate();
+  setView(managerView({ fog: fogProjection({ levelId }), session: { id: session, name: 'S', status: 'active', activeLevelId: levelId } }));
+  host.querySelector('[data-fog-action="reveal-all"]').click();
+  await flush();
+  assert.equal(commandsOfType(adapter, 'fog.revealAll').at(-1).command.payload.levelId, levelId);
+
+  // Switch the active level without ever touching any DOM text/attribute by hand — only a fresh
+  // render(view) changes what the next action targets.
+  setView(managerView({ fog: fogProjection({ levelId: otherLevelId }), session: { id: session, name: 'S', status: 'active', activeLevelId: otherLevelId } }));
+  host.querySelector('[data-fog-action="hide-all"]').click();
+  await flush();
+  assert.equal(commandsOfType(adapter, 'fog.hideAll').at(-1).command.payload.levelId, otherLevelId);
+});
+
+test('no DOM inference: fogController.js source never reads a level/location id from element text/attributes for a mutation payload', () => {
+  const source = readFileSync(SOURCE_PATH, 'utf8');
+  assert.doesNotMatch(source, /dataset\.levelId/);
+  assert.doesNotMatch(source, /dataset\.locationId/);
+});
+
+// --- navigation/denial deactivates editor and drops preview -----------------------------------
+
+test('deactivate() hides controls, deactivates the editor overlay, and discards any uncommitted preview/draft', async () => {
+  const { window, host, frame, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  // An in-progress, uncommitted stroke (pointerdown only, no release).
+  drag(window, canvas, cellSize, [[1, 1], [1, 2]]);
+
+  controller.deactivate();
+  await flush();
+
+  assert.equal(adapter.calls.mutate.length, 0, 'nothing was committed from the discarded preview');
+  assert.equal(canvas.style.pointerEvents, 'none', 'editor overlay is deactivated');
+  const root = host.querySelector('[data-fog-controller]');
+  assert.ok(!root || root.hidden);
+});
+
+test('a stray pointerup after deactivate() emits no mutation', async () => {
+  const { window, host, frame, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+  drag(window, canvas, cellSize, [[1, 1]]);
+  controller.deactivate();
+
+  release(window, canvas, cellSize, [1, 1]);
+  await flush();
+  assert.equal(adapter.calls.mutate.length, 0);
+});
+
+// --- presentation mode -------------------------------------------------------------------------
+
+test("presentation mode 'player' suspends/hides the DM fog editor overlay and controls locally", async () => {
+  const { host, frame, controller, setView } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+  assert.equal(canvas.style.pointerEvents, 'auto', 'sanity: editor was active in dm mode');
+
+  controller.setPresentationMode('player');
+
+  assert.equal(canvas.style.pointerEvents, 'none', 'editor overlay must be suspended in player presentation mode');
+  const root = host.querySelector('[data-fog-controller]');
+  assert.ok(!root || root.hidden, 'fog controls must be hidden in player presentation mode');
+});
+
+test("presentation mode change causes no authority/network mutation", async () => {
+  const { controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  const mutateCallsBefore = adapter.calls.mutate.length;
+  const hydrateCallsBefore = adapter.calls.hydrate.length;
+
+  controller.setPresentationMode('player');
+  controller.setPresentationMode('dm');
+
+  assert.equal(adapter.calls.mutate.length, mutateCallsBefore);
+  assert.equal(adapter.calls.hydrate.length, hydrateCallsBefore);
+});
+
+test("returning to 'dm' presentation mode restores fog controls for a still-current manager view", async () => {
+  const { host, controller, setView } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  controller.setPresentationMode('player');
+  controller.setPresentationMode('dm');
+
+  const root = host.querySelector('[data-fog-controller]');
+  assert.ok(root && root.hidden === false);
+});
+
+test("fog actions clicked while presentation mode is 'player' do nothing (structural safety, not just hidden)", async () => {
+  const { host, controller, setView, adapter } = await buildHarness({ confirmResult: true });
+  controller.activate();
+  setView(managerView());
+  controller.setPresentationMode('player');
+
+  const root = host.querySelector('[data-fog-controller]');
+  root.querySelector('[data-fog-action="reveal-all"]')?.click();
+  await flush();
+
+  assert.equal(commandsOfType(adapter, 'fog.revealAll').length, 0);
+});
+
+// --- dispose -------------------------------------------------------------------------------
+
+test('dispose() removes the toolbar DOM and the editor overlay canvas, and is idempotent', async () => {
+  const { host, frame, controller, setView } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+
+  controller.dispose();
+  assert.equal(host.querySelector('[data-fog-controller]'), null);
+  assert.equal(frame.querySelector('canvas.fog-editor-canvas'), null);
+  assert.doesNotThrow(() => controller.dispose());
+});

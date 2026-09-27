@@ -79,3 +79,96 @@
   image-rendering: -webkit-crisp-edges;
   image-rendering: pixelated;
 }
+
+/*
+ * DM Fog Mode controller toolbar (Issue #10F, src/fog/fogController.js). Appended as an ordinary
+ * `<details>` section inside `#sidebarPanel` (`.sidebar`), so it already inherits that panel's
+ * existing `.sidebar details` / `.sidebar summary` / `.sidebar details button,input,select`
+ * cascade (style.css) — everything here only adds the small amount of layout `.sidebar details`
+ * doesn't already cover (button rows, the area list, the campaign status row), and never
+ * redesigns the shared sidebar chrome itself.
+ */
+.fog-tool-group,
+.fog-brush-group,
+.fog-broad-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fog-tool-group button,
+.fog-brush-group button,
+.fog-broad-group button {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.fog-tool-group button[aria-pressed="true"],
+.fog-brush-group button[aria-pressed="true"] {
+  border-color: var(--gold, #c9a95c);
+  background: rgba(201, 169, 92, 0.22);
+  color: var(--gold-bright, #f5d98b);
+}
+
+.fog-area-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.fog-area-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border-dark, #4c3b22);
+  border-radius: 4px;
+}
+
+.fog-area-list li span {
+  flex: 1 1 100%;
+  color: var(--gold, #c9a95c);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fog-area-list li button {
+  width: auto;
+  flex: 1 1 auto;
+  margin-top: 0;
+  font-size: 11px;
+}
+
+.fog-area-default {
+  border: 0;
+  margin: 6px 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  color: var(--gold, #c9a95c);
+  font-size: 12px;
+}
+
+.fog-area-default label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fog-campaign-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: var(--gold, #c9a95c);
+  font-size: 12px;
+}
+
+.fog-campaign-row button {
+  width: auto;
+  margin-top: 0;
+}

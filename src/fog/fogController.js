@@ -1,0 +1,580 @@
+/**
+ * DM Fog Mode controller (Issue #10 Task 6). Composes the existing 10C mutation bridge
+ * (`fogMutations.js`) and the existing 10E editor (`fogEditor.js`) into one DM-facing toolbar and
+ * wires them to the app's single, already-created realtime session engine — this module never
+ * creates an engine, adapter, subscription or Supabase client itself, and there is exactly one
+ * live session engine/lifecycle in the app regardless of whether Fog Mode is active.
+ *
+ * `render(view)` is fed every authoritative manager `BoardView` from the same snapshot pipeline
+ * the rest of the DM board already renders from (see `src/entry/app.js`); this module never
+ * hydrates or requests state on its own. Fog controls render only for a manager-shaped view
+ * (`view.authority.canManage`); a player-shaped or `null` (denied) view hides everything.
+ *
+ * Every mutation this controller issues reads its target ids (`levelId`, `locationId`) from the
+ * most recently rendered manager view or the stroke payload the editor itself captured at
+ * pointerdown — never by inferring an id from DOM text/attributes, and never by guessing from the
+ * currently-presented route.
+ */
+import { createFogMutationBridge } from './fogMutations.js';
+import { createFogEditor } from './fogEditor.js';
+import { collapseCells, BRUSH_SIZES } from './fogMask.js';
+
+const DISABLE_FOG_MESSAGE = 'Disabling fog makes the entire base map visible to players immediately. '
+  + 'DM-hidden creatures, objects, and other concealed elements stay hidden — disabling fog does not '
+  + 'reveal them. Your current revealed/hidden cell data is preserved and will be restored exactly as '
+  + 'it is now if you re-enable fog.';
+
+function isManagerView(view) {
+  return Boolean(view && view.authority && view.authority.canManage === true);
+}
+
+/** Expand an area's compact `[y, xStartInclusive, xEndExclusive]` cellRuns into `[x, y]` pairs, for
+ * initializing the local edit selection only (design §3.2 / plan step 6.4). Not a security
+ * boundary — malformed entries are simply skipped rather than validated strictly. */
+function expandCellRuns(cellRuns) {
+  const cells = [];
+  if (!Array.isArray(cellRuns)) return cells;
+  for (const run of cellRuns) {
+    if (!Array.isArray(run) || run.length !== 3) continue;
+    const [y, xStart, xEnd] = run;
+    if (!Number.isInteger(y) || !Number.isInteger(xStart) || !Number.isInteger(xEnd) || xStart >= xEnd) continue;
+    for (let x = xStart; x < xEnd; x += 1) cells.push([x, y]);
+  }
+  return cells;
+}
+
+function overrideToSelectValue(override) {
+  if (override === true) return 'on';
+  if (override === false) return 'off';
+  return 'inherit';
+}
+
+function selectValueToOverride(value) {
+  if (value === 'on') return true;
+  if (value === 'off') return false;
+  return null;
+}
+
+/**
+ * @param {{
+ *   engine: ReturnType<import('../realtime/engine.js').createSyncEngine>,
+ *   getSessionId: () => string|null,
+ *   getView: () => object|null,
+ *   frame: HTMLElement,
+ *   grid: HTMLElement,
+ *   host: HTMLElement,
+ *   confirmAction: (request: { action: string, message: string }) => boolean|Promise<boolean>,
+ *   onResult?: (result: object) => void,
+ * }} args
+ */
+export function createFogController({ engine, getSessionId, getView, frame, grid, host, confirmAction, onResult = () => {} }) {
+  if (!engine || typeof getSessionId !== 'function' || typeof getView !== 'function' || !frame || !grid || !host || typeof confirmAction !== 'function') {
+    throw new TypeError('createFogController requires { engine, getSessionId, getView, frame, grid, host, confirmAction }');
+  }
+
+  const doc = host.ownerDocument;
+  const bridge = createFogMutationBridge(engine);
+
+  let disposed = false;
+  let presentationMode = 'dm'; // 'dm' | 'player'
+  let editorActive = false; // local "Fog Mode" paint toggle, independent of controller activate()/deactivate()
+  let tool = 'reveal';
+  let brushSize = 1;
+  let opacity = 1;
+
+  // Named-area draft: purely local until Save (design §3.2 / plan step 6.4). `levelId` is captured
+  // when the draft starts so a mid-edit render() for a different level can never redirect a Save.
+  let draft = null; // { areaId: string|null, levelId: string, name: string, cells: Map<string,[number,number]>, revealedByDefault: boolean }
+
+  let root = null;
+  let els = null; // cached control references, built once with the root
+
+  const editor = createFogEditor({ frame, grid, onStroke: handleStroke });
+
+  async function submit(mutateFn, type) {
+    const sessionId = getSessionId();
+    if (!sessionId) return;
+    const context = engine.getContext?.();
+    const result = await mutateFn(sessionId);
+    if (disposed) return;
+    if (context === engine.getContext?.() && sessionId === getSessionId()) {
+      onResult({ type, ...result });
+    }
+  }
+
+  function currentLevelId() {
+    return getView()?.fog?.levelId ?? null;
+  }
+
+  function currentLocationId() {
+    return getView()?.dm?.fog?.locationId ?? null;
+  }
+
+  function handleStroke(stroke) {
+    if (presentationMode !== 'dm') return; // structural safety, not just a hidden control (10F)
+    if (stroke.purpose === 'area') {
+      if (!draft) return; // stray report from a purpose the draft workflow already left
+      for (const [x, y] of stroke.cells) {
+        const key = `${x},${y}`;
+        if (stroke.action === 'add') draft.cells.set(key, [x, y]);
+        else draft.cells.delete(key);
+      }
+      editor.setSelectedCells(Array.from(draft.cells.values()));
+      return;
+    }
+    void submit(sessionId => bridge.paint(sessionId, { levelId: stroke.levelId, mode: stroke.mode, cells: stroke.cells }), 'fog.paint');
+  }
+
+  // --- named-area draft workflow -----------------------------------------------------------
+
+  function startDraft(existingArea) {
+    const levelId = currentLevelId();
+    draft = existingArea
+      ? {
+        areaId: existingArea.id,
+        levelId: existingArea.levelId ?? levelId,
+        name: existingArea.name ?? '',
+        cells: new Map(expandCellRuns(existingArea.cellRuns).map(cell => [`${cell[0]},${cell[1]}`, cell])),
+        revealedByDefault: Boolean(existingArea.revealedByDefault),
+      }
+      : { areaId: null, levelId, name: '', cells: new Map(), revealedByDefault: false };
+    editor.setPurpose('area');
+    editor.setSelectedCells(Array.from(draft.cells.values()));
+    if (!editorActive) {
+      editorActive = true;
+      editor.setActive(true);
+      if (els) els.toggle.textContent = 'Exit Fog Mode';
+    }
+    renderAreaEditor();
+  }
+
+  function endDraft() {
+    draft = null;
+    editor.setPurpose('fog');
+    editor.setSelectedCells([]);
+    renderAreaEditor();
+  }
+
+  function saveDraft() {
+    if (!draft) return;
+    const { areaId, levelId, revealedByDefault } = draft;
+    const name = els.areaName.value;
+    const cells = collapseCells(Array.from(draft.cells.values()));
+    if (areaId === null) {
+      void submit(sessionId => bridge.createArea(sessionId, { levelId, name, cells, revealedByDefault }), 'fog.area.create');
+    } else {
+      void submit(sessionId => bridge.updateArea(sessionId, { levelId, areaId, name, cells, revealedByDefault }), 'fog.area.update');
+    }
+    endDraft();
+  }
+
+  async function deleteArea(area) {
+    const confirmed = await confirmAction({ action: 'area-delete', message: `Delete the named area "${area.name}"? This removes the saved selection but does not change current fog visibility.` });
+    if (!confirmed) return;
+    void submit(sessionId => bridge.deleteArea(sessionId, { levelId: area.levelId ?? currentLevelId(), areaId: area.id }), 'fog.area.delete');
+  }
+
+  function setAreaVisibility(area, revealed) {
+    void submit(sessionId => bridge.setAreaVisibility(sessionId, { levelId: area.levelId ?? currentLevelId(), areaId: area.id, revealed }), 'fog.area.setVisibility');
+  }
+
+  // --- broad actions --------------------------------------------------------------------------
+
+  async function revealAll() {
+    const confirmed = await confirmAction({ action: 'reveal-all', message: 'Reveal the entire level to players? This immediately exposes the whole map.' });
+    if (!confirmed) return;
+    void submit(sessionId => bridge.revealAll(sessionId, { levelId: currentLevelId() }), 'fog.revealAll');
+  }
+
+  async function hideAll() {
+    const confirmed = await confirmAction({ action: 'hide-all', message: 'Hide the entire level from players? This immediately conceals the whole map.' });
+    if (!confirmed) return;
+    void submit(sessionId => bridge.hideAll(sessionId, { levelId: currentLevelId() }), 'fog.hideAll');
+  }
+
+  async function resetDefaults() {
+    const confirmed = await confirmAction({ action: 'reset', message: 'Reset fog to its configured defaults? This restores the starting Hidden/Revealed layout for this level and cannot be undone.' });
+    if (!confirmed) return;
+    void submit(sessionId => bridge.resetDefaults(sessionId, { levelId: currentLevelId() }), 'fog.resetDefaults');
+  }
+
+  async function disableCampaignFog() {
+    const confirmed = await confirmAction({ action: 'disable-campaign', message: DISABLE_FOG_MESSAGE });
+    if (!confirmed) return;
+    void submit(sessionId => bridge.setCampaignEnabled(sessionId, { enabled: false }), 'fog.setCampaignEnabled');
+  }
+
+  function enableCampaignFog() {
+    // No exposure confirmation: enabling restores the stored mask rather than exposing anything.
+    void submit(sessionId => bridge.setCampaignEnabled(sessionId, { enabled: true }), 'fog.setCampaignEnabled');
+  }
+
+  function setLocationOverride(value) {
+    const enabled = selectValueToOverride(value);
+    void submit(sessionId => bridge.setLocationOverride(sessionId, { locationId: currentLocationId(), enabled }), 'fog.setLocationOverride');
+  }
+
+  function setLevelOverride(value) {
+    const enabled = selectValueToOverride(value);
+    void submit(sessionId => bridge.setLevelOverride(sessionId, { levelId: currentLevelId(), enabled }), 'fog.setLevelOverride');
+  }
+
+  // --- DOM construction ------------------------------------------------------------------------
+
+  function buildToolButtonGroup(className, buttons) {
+    const group = doc.createElement('div');
+    group.className = className;
+    group.setAttribute('role', 'group');
+    const refs = {};
+    for (const { action, label } of buttons) {
+      const button = doc.createElement('button');
+      button.type = 'button';
+      button.dataset.fogAction = action;
+      button.textContent = label;
+      group.appendChild(button);
+      refs[action] = button;
+    }
+    return { group, refs };
+  }
+
+  function guarded(fn) {
+    return event => {
+      event?.preventDefault?.();
+      if (presentationMode !== 'dm') return; // structural safety even if a control is reachable while hidden
+      fn();
+    };
+  }
+
+  function buildDom() {
+    root = doc.createElement('details');
+    root.className = 'fog-controller';
+    root.dataset.fogController = '';
+    root.open = true;
+
+    const summary = doc.createElement('summary');
+    summary.textContent = 'Fog of War';
+    root.appendChild(summary);
+
+    // Fog Mode / tool / brush / opacity
+    const modeSection = doc.createElement('div');
+    modeSection.className = 'fog-section fog-mode-section';
+
+    const toggle = doc.createElement('button');
+    toggle.type = 'button';
+    toggle.dataset.fogAction = 'toggle-fog-mode';
+    toggle.textContent = 'Enter Fog Mode';
+    toggle.addEventListener('click', guarded(() => {
+      editorActive = !editorActive;
+      editor.setActive(editorActive);
+      toggle.textContent = editorActive ? 'Exit Fog Mode' : 'Enter Fog Mode';
+    }));
+    modeSection.appendChild(toggle);
+
+    const { group: toolGroup, refs: toolRefs } = buildToolButtonGroup('fog-tool-group', [
+      { action: 'tool-reveal', label: 'Reveal' },
+      { action: 'tool-hide', label: 'Hide' },
+    ]);
+    toolRefs['tool-reveal'].addEventListener('click', guarded(() => { tool = 'reveal'; editor.setMode('reveal'); updateToolPressedState(); }));
+    toolRefs['tool-hide'].addEventListener('click', guarded(() => { tool = 'hide'; editor.setMode('hide'); updateToolPressedState(); }));
+    modeSection.appendChild(toolGroup);
+
+    const { group: brushGroup, refs: brushRefs } = buildToolButtonGroup('fog-brush-group', BRUSH_SIZES.map(size => ({ action: `brush-${size}`, label: `${size}x${size}` })));
+    for (const size of BRUSH_SIZES) {
+      brushRefs[`brush-${size}`].addEventListener('click', guarded(() => { brushSize = size; editor.setBrushSize(size); updateBrushPressedState(); }));
+    }
+    modeSection.appendChild(brushGroup);
+
+    const opacityLabel = doc.createElement('label');
+    opacityLabel.className = 'sidebar-field';
+    opacityLabel.textContent = 'Overlay opacity';
+    const opacityInput = doc.createElement('input');
+    opacityInput.type = 'range';
+    opacityInput.min = '0';
+    opacityInput.max = '1';
+    opacityInput.step = '0.05';
+    opacityInput.dataset.fogField = 'opacity';
+    opacityInput.value = String(opacity);
+    opacityInput.addEventListener('input', () => {
+      if (presentationMode !== 'dm') return;
+      opacity = Number(opacityInput.value);
+      editor.setOpacity(opacity);
+    });
+    opacityLabel.appendChild(opacityInput);
+    modeSection.appendChild(opacityLabel);
+    root.appendChild(modeSection);
+
+    // Named areas
+    const areasSection = doc.createElement('div');
+    areasSection.className = 'fog-section fog-areas-section';
+    const areasHeading = doc.createElement('h4');
+    areasHeading.textContent = 'Named Areas';
+    areasSection.appendChild(areasHeading);
+    const areaList = doc.createElement('ul');
+    areaList.className = 'fog-area-list';
+    areaList.dataset.fogAreaList = '';
+    areasSection.appendChild(areaList);
+
+    const newAreaButton = doc.createElement('button');
+    newAreaButton.type = 'button';
+    newAreaButton.dataset.fogAction = 'new-area';
+    newAreaButton.textContent = 'New Area';
+    newAreaButton.addEventListener('click', guarded(() => startDraft(null)));
+    areasSection.appendChild(newAreaButton);
+
+    const areaEditor = doc.createElement('div');
+    areaEditor.className = 'fog-area-editor';
+    areaEditor.dataset.fogAreaEditor = '';
+    areaEditor.hidden = true;
+
+    const nameLabel = doc.createElement('label');
+    nameLabel.className = 'sidebar-field';
+    nameLabel.textContent = 'Area name';
+    const nameInput = doc.createElement('input');
+    nameInput.type = 'text';
+    nameInput.dataset.fogField = 'area-name';
+    nameLabel.appendChild(nameInput);
+    areaEditor.appendChild(nameLabel);
+
+    const defaultFieldset = doc.createElement('fieldset');
+    defaultFieldset.className = 'fog-area-default';
+    for (const value of ['hidden', 'revealed']) {
+      const optionLabel = doc.createElement('label');
+      const radio = doc.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'fog-area-default';
+      radio.value = value;
+      radio.dataset.fogField = 'area-default';
+      radio.addEventListener('change', () => {
+        if (draft && radio.checked) draft.revealedByDefault = value === 'revealed';
+      });
+      optionLabel.appendChild(radio);
+      optionLabel.appendChild(doc.createTextNode(value === 'hidden' ? 'Hidden by default' : 'Revealed by default'));
+      defaultFieldset.appendChild(optionLabel);
+    }
+    areaEditor.appendChild(defaultFieldset);
+
+    const saveButton = doc.createElement('button');
+    saveButton.type = 'button';
+    saveButton.dataset.fogAction = 'area-save';
+    saveButton.textContent = 'Save Area';
+    saveButton.addEventListener('click', guarded(saveDraft));
+    areaEditor.appendChild(saveButton);
+
+    const cancelButton = doc.createElement('button');
+    cancelButton.type = 'button';
+    cancelButton.dataset.fogAction = 'area-cancel';
+    cancelButton.textContent = 'Cancel';
+    cancelButton.addEventListener('click', guarded(endDraft));
+    areaEditor.appendChild(cancelButton);
+
+    areasSection.appendChild(areaEditor);
+    root.appendChild(areasSection);
+
+    // Broad actions
+    const broadSection = doc.createElement('div');
+    broadSection.className = 'fog-section fog-broad-actions';
+    const { group: broadGroup, refs: broadRefs } = buildToolButtonGroup('fog-broad-group', [
+      { action: 'reveal-all', label: 'Reveal All' },
+      { action: 'hide-all', label: 'Hide All' },
+      { action: 'reset', label: 'Reset to Defaults' },
+    ]);
+    broadRefs['reveal-all'].addEventListener('click', guarded(revealAll));
+    broadRefs['hide-all'].addEventListener('click', guarded(hideAll));
+    broadRefs.reset.addEventListener('click', guarded(resetDefaults));
+    broadSection.appendChild(broadGroup);
+    root.appendChild(broadSection);
+
+    // Inheritance / enable-disable
+    const inheritanceSection = doc.createElement('div');
+    inheritanceSection.className = 'fog-section fog-inheritance-section';
+
+    const campaignRow = doc.createElement('div');
+    campaignRow.className = 'fog-campaign-row';
+    const campaignLabel = doc.createElement('span');
+    campaignLabel.textContent = 'Campaign fog: ';
+    const campaignStatus = doc.createElement('span');
+    campaignStatus.dataset.fogStatus = 'campaign';
+    campaignLabel.appendChild(campaignStatus);
+    campaignRow.appendChild(campaignLabel);
+    const enableButton = doc.createElement('button');
+    enableButton.type = 'button';
+    enableButton.dataset.fogAction = 'enable-campaign';
+    enableButton.textContent = 'Enable Fog';
+    enableButton.addEventListener('click', guarded(enableCampaignFog));
+    campaignRow.appendChild(enableButton);
+    const disableButton = doc.createElement('button');
+    disableButton.type = 'button';
+    disableButton.dataset.fogAction = 'disable-campaign';
+    disableButton.textContent = 'Disable Fog';
+    disableButton.addEventListener('click', guarded(() => { void disableCampaignFog(); }));
+    campaignRow.appendChild(disableButton);
+    inheritanceSection.appendChild(campaignRow);
+
+    function buildOverrideSelect(fieldName, labelText, onChange) {
+      const label = doc.createElement('label');
+      label.className = 'sidebar-field';
+      label.textContent = labelText;
+      const select = doc.createElement('select');
+      select.dataset.fogField = fieldName;
+      for (const [value, text] of [['on', 'On'], ['off', 'Off'], ['inherit', 'Inherit']]) {
+        const option = doc.createElement('option');
+        option.value = value;
+        option.textContent = text;
+        select.appendChild(option);
+      }
+      select.addEventListener('change', () => {
+        if (presentationMode !== 'dm') return;
+        onChange(select.value);
+      });
+      label.appendChild(select);
+      inheritanceSection.appendChild(label);
+      return select;
+    }
+
+    const locationSelect = buildOverrideSelect('location-override', 'Location fog', setLocationOverride);
+    const levelSelect = buildOverrideSelect('level-override', 'Level fog', setLevelOverride);
+
+    root.appendChild(inheritanceSection);
+    root.hidden = true; // until the first render(view) determines manager/presentation visibility
+    host.appendChild(root);
+
+    els = {
+      root, toggle, toolRefs, brushRefs, opacityInput, areaList, areaEditor, areaName: nameInput,
+      areaDefaultHidden: defaultFieldset.querySelector('[value="hidden"]'),
+      areaDefaultRevealed: defaultFieldset.querySelector('[value="revealed"]'),
+      campaignStatus, enableButton, disableButton, locationSelect, levelSelect,
+    };
+
+    function updateToolPressedState() {
+      toolRefs['tool-reveal'].setAttribute('aria-pressed', String(tool === 'reveal'));
+      toolRefs['tool-hide'].setAttribute('aria-pressed', String(tool === 'hide'));
+    }
+    function updateBrushPressedState() {
+      for (const size of BRUSH_SIZES) brushRefs[`brush-${size}`].setAttribute('aria-pressed', String(size === brushSize));
+    }
+    updateToolPressedState();
+    updateBrushPressedState();
+    els.updateToolPressedState = updateToolPressedState;
+    els.updateBrushPressedState = updateBrushPressedState;
+  }
+
+  function renderAreaEditor() {
+    if (!els) return;
+    els.areaEditor.hidden = !draft;
+    if (!draft) return;
+    els.areaName.value = draft.name;
+    els.areaDefaultHidden.checked = !draft.revealedByDefault;
+    els.areaDefaultRevealed.checked = draft.revealedByDefault;
+  }
+
+  function renderAreaList(view) {
+    if (!els) return;
+    els.areaList.innerHTML = '';
+    const levelId = currentLevelId();
+    const areas = (view?.dm?.fog?.areas ?? []).filter(area => area.levelId === levelId);
+    for (const area of areas) {
+      const row = doc.createElement('li');
+      row.dataset.areaId = area.id;
+      const label = doc.createElement('span');
+      label.textContent = `${area.name} (${area.status})`;
+      row.appendChild(label);
+
+      const editButton = doc.createElement('button');
+      editButton.type = 'button';
+      editButton.dataset.fogAction = 'area-edit';
+      editButton.dataset.areaId = area.id;
+      editButton.textContent = 'Edit';
+      editButton.addEventListener('click', guarded(() => startDraft(area)));
+      row.appendChild(editButton);
+
+      const revealButton = doc.createElement('button');
+      revealButton.type = 'button';
+      revealButton.dataset.fogAction = 'area-reveal';
+      revealButton.dataset.areaId = area.id;
+      revealButton.textContent = 'Reveal Area';
+      revealButton.addEventListener('click', guarded(() => setAreaVisibility(area, true)));
+      row.appendChild(revealButton);
+
+      const hideButton = doc.createElement('button');
+      hideButton.type = 'button';
+      hideButton.dataset.fogAction = 'area-hide';
+      hideButton.dataset.areaId = area.id;
+      hideButton.textContent = 'Hide Area';
+      hideButton.addEventListener('click', guarded(() => setAreaVisibility(area, false)));
+      row.appendChild(hideButton);
+
+      const deleteButton = doc.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.dataset.fogAction = 'area-delete';
+      deleteButton.dataset.areaId = area.id;
+      deleteButton.textContent = 'Delete';
+      deleteButton.addEventListener('click', guarded(() => { void deleteArea(area); }));
+      row.appendChild(deleteButton);
+
+      els.areaList.appendChild(row);
+    }
+  }
+
+  function renderInheritance(view) {
+    if (!els) return;
+    const fog = view?.dm?.fog;
+    els.campaignStatus.textContent = fog?.campaignEnabled ? 'On' : 'Off';
+    els.locationSelect.value = overrideToSelectValue(fog?.locationOverride ?? null);
+    els.levelSelect.value = overrideToSelectValue(fog?.levelOverride ?? null);
+  }
+
+  function updateVisibility(view) {
+    if (!root) return;
+    root.hidden = presentationMode !== 'dm' || !isManagerView(view);
+  }
+
+  return {
+    activate() {
+      if (!root) buildDom();
+    },
+
+    deactivate() {
+      editorActive = false;
+      editor.setActive(false);
+      if (els) els.toggle.textContent = 'Enter Fog Mode';
+      draft = null;
+      editor.setPurpose('fog');
+      editor.setSelectedCells([]);
+      if (els) renderAreaEditor();
+      presentationMode = 'dm';
+      if (root) root.hidden = true;
+    },
+
+    render(view) {
+      editor.setFog(view?.fog ?? null);
+      if (!root) return;
+      if (isManagerView(view)) {
+        renderAreaList(view);
+        renderInheritance(view);
+      }
+      updateVisibility(view);
+    },
+
+    setPresentationMode(mode) {
+      if (mode !== 'dm' && mode !== 'player') return;
+      if (mode === presentationMode) return;
+      presentationMode = mode;
+      if (mode === 'player') {
+        editorActive = false;
+        editor.setActive(false);
+        if (els) els.toggle.textContent = 'Enter Fog Mode';
+      }
+      if (root) root.hidden = presentationMode !== 'dm' || !isManagerView(getView());
+    },
+
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      draft = null;
+      editor.dispose();
+      if (root?.parentNode) root.parentNode.removeChild(root);
+      root = null;
+      els = null;
+    },
+  };
+}

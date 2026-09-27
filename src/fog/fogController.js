@@ -96,7 +96,23 @@ export function createFogController({ engine, getSessionId, getView, frame, grid
 
   const editor = createFogEditor({ frame, grid, onStroke: handleStroke });
 
+  /** The single authoritative manager-authority gate (10F-FIX2): returns the current view only if
+   * it currently carries manager authority, else `null`. Every mutation path is required to check
+   * this — never toolbar visibility, never `presentationMode`, and never authority captured at an
+   * earlier point such as when a click originally occurred — because none of those track whether
+   * manager authority still holds *right now*. */
+  function currentManagerView() {
+    const view = getView();
+    return isManagerView(view) ? view : null;
+  }
+
+  /** Every controller mutation funnels through here, so gating authority in this one place is what
+   * makes the boundary systemic rather than per-control: a retained handler fired after demotion,
+   * or a confirmation that resolves after authority was already lost, both dead-end here with zero
+   * mutation (10F-FIX2). This re-check is deliberately redundant with any earlier check a caller
+   * already performed — it is the last line of defense right before the network call. */
   async function submit(mutateFn, type) {
+    if (!currentManagerView()) return;
     const sessionId = getSessionId();
     if (!sessionId) return;
     const context = engine.getContext?.();
@@ -174,9 +190,12 @@ export function createFogController({ engine, getSessionId, getView, frame, grid
   }
 
   async function deleteArea(area) {
+    if (!currentManagerView()) return; // pre-confirm authority check
+    const levelId = area.levelId ?? currentLevelId(); // captured before the confirmation gap, never re-read after
     const confirmed = await confirmAction({ action: 'area-delete', message: `Delete the named area "${area.name}"? This removes the saved selection but does not change current fog visibility.` });
     if (!confirmed) return;
-    void submit(sessionId => bridge.deleteArea(sessionId, { levelId: area.levelId ?? currentLevelId(), areaId: area.id }), 'fog.area.delete');
+    if (!currentManagerView()) return; // post-confirm authority check: authority may have been lost while the confirmation was open
+    void submit(sessionId => bridge.deleteArea(sessionId, { levelId, areaId: area.id }), 'fog.area.delete');
   }
 
   function setAreaVisibility(area, revealed) {
@@ -199,34 +218,45 @@ export function createFogController({ engine, getSessionId, getView, frame, grid
     }
   }
 
-  async function revealAll() {
-    await runPendingGuarded('reveal-all', async () => {
-      const confirmed = await confirmAction({ action: 'reveal-all', message: 'Reveal the entire level to players? This immediately exposes the whole map.' });
+  /** Runs a level-scoped broad action (Reveal All / Hide All / Reset) under the per-key pending
+   * guard. Manager authority is checked before the confirmation is even opened, and the
+   * authoritative `levelId` is captured at that same moment rather than re-read later. After the
+   * confirmation resolves, both authority and that captured `levelId` are revalidated against the
+   * *current* view before the single `submit()` call: if authority is gone, or the authoritative
+   * level has moved to a different one while the confirmation was open, the action aborts with zero
+   * mutation instead of silently mutating the wrong level (10F-FIX2 defects 1 and 2 for broad
+   * actions). */
+  async function runLevelScopedBroadAction(key, message, mutate, type) {
+    await runPendingGuarded(key, async () => {
+      const managerView = currentManagerView();
+      if (!managerView) return; // pre-confirm authority check
+      const levelId = managerView.fog?.levelId ?? null;
+      const confirmed = await confirmAction({ action: key, message });
       if (!confirmed) return;
-      await submit(sessionId => bridge.revealAll(sessionId, { levelId: currentLevelId() }), 'fog.revealAll');
+      const stillManagerView = currentManagerView();
+      if (!stillManagerView || (stillManagerView.fog?.levelId ?? null) !== levelId) return; // post-confirm authority + context check
+      await submit(sessionId => mutate(sessionId, levelId), type);
     });
+  }
+
+  async function revealAll() {
+    await runLevelScopedBroadAction('reveal-all', 'Reveal the entire level to players? This immediately exposes the whole map.', (sessionId, levelId) => bridge.revealAll(sessionId, { levelId }), 'fog.revealAll');
   }
 
   async function hideAll() {
-    await runPendingGuarded('hide-all', async () => {
-      const confirmed = await confirmAction({ action: 'hide-all', message: 'Hide the entire level from players? This immediately conceals the whole map.' });
-      if (!confirmed) return;
-      await submit(sessionId => bridge.hideAll(sessionId, { levelId: currentLevelId() }), 'fog.hideAll');
-    });
+    await runLevelScopedBroadAction('hide-all', 'Hide the entire level from players? This immediately conceals the whole map.', (sessionId, levelId) => bridge.hideAll(sessionId, { levelId }), 'fog.hideAll');
   }
 
   async function resetDefaults() {
-    await runPendingGuarded('reset', async () => {
-      const confirmed = await confirmAction({ action: 'reset', message: 'Reset fog to its configured defaults? This restores the starting Hidden/Revealed layout for this level and cannot be undone.' });
-      if (!confirmed) return;
-      await submit(sessionId => bridge.resetDefaults(sessionId, { levelId: currentLevelId() }), 'fog.resetDefaults');
-    });
+    await runLevelScopedBroadAction('reset', 'Reset fog to its configured defaults? This restores the starting Hidden/Revealed layout for this level and cannot be undone.', (sessionId, levelId) => bridge.resetDefaults(sessionId, { levelId }), 'fog.resetDefaults');
   }
 
   async function disableCampaignFog() {
     await runPendingGuarded('disable-campaign', async () => {
+      if (!currentManagerView()) return; // pre-confirm authority check
       const confirmed = await confirmAction({ action: 'disable-campaign', message: DISABLE_FOG_MESSAGE });
       if (!confirmed) return;
+      if (!currentManagerView()) return; // post-confirm authority check
       await submit(sessionId => bridge.setCampaignEnabled(sessionId, { enabled: false }), 'fog.setCampaignEnabled');
     });
   }

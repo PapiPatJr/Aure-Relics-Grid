@@ -1092,6 +1092,170 @@ test('Disable Fog: a second click while its confirmation is pending is ignored; 
   assert.equal(commandsOfType(adapter, 'fog.setCampaignEnabled').length, 2);
 });
 
+// --- 10F-FIX2: mutation handlers must revalidate manager authority at submit time --------------
+
+// Path A: a retained handler fired after demotion (toolbar hidden, but the handler still exists).
+
+test('a retained Reveal All handler invoked after manager authority is lost cannot reach the mutation bridge', async () => {
+  const { host, controller, setView, adapter, confirmAction } = await buildHarness({ confirmResult: true });
+  controller.activate();
+  setView(managerView());
+  const button = host.querySelector('[data-fog-action="reveal-all"]');
+
+  setView(playerView()); // authority lost; toolbar is now hidden but the handler reference is unchanged
+
+  button.click(); // simulates a retained handler firing after the toolbar was hidden
+  await flush();
+
+  assert.equal(confirmAction.calls.length, 0, 'authority is checked before even opening a confirmation');
+  assert.equal(commandsOfType(adapter, 'fog.revealAll').length, 0, 'no mutation once manager authority is gone, even via a retained handler');
+});
+
+test('a retained Disable Fog handler invoked after manager authority is lost cannot reach the mutation bridge', async () => {
+  const { host, controller, setView, adapter, confirmAction } = await buildHarness({ confirmResult: true });
+  controller.activate();
+  setView(managerView());
+  const button = host.querySelector('[data-fog-action="disable-campaign"]');
+
+  setView(playerView());
+
+  button.click();
+  await flush();
+
+  assert.equal(confirmAction.calls.length, 0);
+  assert.equal(commandsOfType(adapter, 'fog.setCampaignEnabled').length, 0);
+});
+
+test('a retained Reveal Area handler (a non-broad, non-confirming mutation path) invoked after manager authority is lost cannot reach the mutation bridge, proving the gate is systemic', async () => {
+  const { host, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  const area = { id: 'area-1', levelId, name: 'Room', cellRuns: [], revealedByDefault: false, status: 'Hidden' };
+  setView(managerView({ dm: { fog: fogManagerState({ areas: [area] }) } }));
+  const root = host.querySelector('[data-fog-controller]');
+  const button = root.querySelector('[data-fog-action="area-reveal"][data-area-id="area-1"]');
+
+  setView(playerView());
+
+  button.click(); // the DOM row still exists (only root.hidden changed); a retained reference could fire it too
+  await flush();
+
+  assert.equal(commandsOfType(adapter, 'fog.area.setVisibility').length, 0, 'no mutation once manager authority is gone, even for a no-confirmation control');
+});
+
+test('a retained level-override select change invoked after manager authority is lost cannot reach the mutation bridge', async () => {
+  const { host, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  const root = host.querySelector('[data-fog-controller]');
+  const select = root.querySelector('[data-fog-field="level-override"]');
+
+  setView(playerView());
+
+  select.value = 'off';
+  select.dispatchEvent(new (host.ownerDocument.defaultView).Event('change', { bubbles: true }));
+  await flush();
+
+  assert.equal(commandsOfType(adapter, 'fog.setLevelOverride').length, 0, 'a settings control must not mutate once manager authority is gone');
+});
+
+// Path B: a pending confirmation that survives a demotion delivered while it was open.
+
+test('Reveal All: a pending confirmation that resolves true after manager authority is lost produces zero mutation', async () => {
+  const confirmAction = deferredConfirmSpy();
+  const { host, setView, controller, adapter } = await buildHarness({ confirmAction });
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="reveal-all"]').click();
+  assert.equal(confirmAction.calls.length, 1);
+
+  setView(playerView()); // authority lost while the confirmation is still pending
+
+  confirmAction.deferreds[0].resolve(true);
+  await flush();
+
+  assert.equal(commandsOfType(adapter, 'fog.revealAll').length, 0, 'authority lost mid-confirmation must abort with zero mutation');
+});
+
+test('Disable Fog: a pending confirmation that resolves true after manager authority is lost produces zero mutation', async () => {
+  const confirmAction = deferredConfirmSpy();
+  const { host, setView, controller, adapter } = await buildHarness({ confirmAction });
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="disable-campaign"]').click();
+  assert.equal(confirmAction.calls.length, 1);
+
+  setView(playerView());
+
+  confirmAction.deferreds[0].resolve(true);
+  await flush();
+
+  assert.equal(commandsOfType(adapter, 'fog.setCampaignEnabled').length, 0, 'authority lost mid-confirmation must abort with zero mutation');
+});
+
+test('Delete Area: a pending confirmation that resolves true after manager authority is lost produces zero mutation', async () => {
+  const confirmAction = deferredConfirmSpy();
+  const { host, setView, controller, adapter } = await buildHarness({ confirmAction });
+  controller.activate();
+  const area = { id: 'area-1', levelId, name: 'Room', cellRuns: [], revealedByDefault: false, status: 'Hidden' };
+  setView(managerView({ dm: { fog: fogManagerState({ areas: [area] }) } }));
+  host.querySelector('[data-fog-action="area-delete"][data-area-id="area-1"]').click();
+  assert.equal(confirmAction.calls.length, 1);
+
+  setView(playerView());
+
+  confirmAction.deferreds[0].resolve(true);
+  await flush();
+
+  assert.equal(commandsOfType(adapter, 'fog.area.delete').length, 0, 'authority lost mid-confirmation must abort with zero mutation');
+});
+
+// Level-context preservation across the confirmation gap.
+
+test('Reveal All: switching the authoritative level to Level B while a Level A confirmation is pending aborts with zero mutation against either level, and a fresh action under the current level then works normally', async () => {
+  const confirmAction = deferredConfirmSpy();
+  const { host, setView, controller, adapter } = await buildHarness({ confirmAction });
+  controller.activate();
+  setView(managerView({ fog: fogProjection({ levelId }) }));
+  host.querySelector('[data-fog-action="reveal-all"]').click();
+  assert.equal(confirmAction.calls.length, 1);
+
+  setView(managerView({ fog: fogProjection({ levelId: otherLevelId }) })); // still manager, but a different authoritative level
+
+  confirmAction.deferreds[0].resolve(true);
+  await flush();
+
+  assert.equal(commandsOfType(adapter, 'fog.revealAll').length, 0, 'a Level A confirmation must never silently retarget Level B');
+
+  // A fresh action under the now-current level must work normally after the abort.
+  host.querySelector('[data-fog-action="reveal-all"]').click();
+  await flush();
+  assert.equal(confirmAction.calls.length, 2, 'the pending guard must have cleared after the aborted attempt settled');
+  confirmAction.deferreds[1].resolve(true);
+  await flush();
+
+  const calls = commandsOfType(adapter, 'fog.revealAll');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command.payload.levelId, otherLevelId);
+});
+
+test('Hide All: a same-level authoritative refresh while confirmation is pending does not abort a still-valid action', async () => {
+  const confirmAction = deferredConfirmSpy();
+  const { host, setView, controller, adapter } = await buildHarness({ confirmAction });
+  controller.activate();
+  setView(managerView({ fog: fogProjection({ levelId }) }));
+  host.querySelector('[data-fog-action="hide-all"]').click();
+
+  // An unrelated same-level refresh (new object identity, same levelId) must not be mistaken for a context change.
+  setView(managerView({ fog: fogProjection({ levelId, revealedRuns: [[0, 0, 1]] }) }));
+
+  confirmAction.deferreds[0].resolve(true);
+  await flush();
+
+  const calls = commandsOfType(adapter, 'fog.hideAll');
+  assert.equal(calls.length, 1, 'a same-level refresh during confirmation must not block a still-valid action');
+  assert.equal(calls[0].command.payload.levelId, levelId);
+});
+
 // --- dispose -------------------------------------------------------------------------------
 
 test('dispose() removes the toolbar DOM and the editor overlay canvas, and is idempotent', async () => {

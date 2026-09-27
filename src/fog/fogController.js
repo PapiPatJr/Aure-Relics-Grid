@@ -86,6 +86,11 @@ export function createFogController({ engine, getSessionId, getView, frame, grid
   // when the draft starts so a mid-edit render() for a different level can never redirect a Save.
   let draft = null; // { areaId: string|null, levelId: string, name: string, cells: Map<string,[number,number]>, revealedByDefault: boolean }
 
+  // Narrowest possible pending-action guard (10F-FIX1 defect 3): each broad, confirmation-gated
+  // mutation gets its own key so at most one confirm/mutate cycle for that specific action can be
+  // in flight at a time. This is controller-local state, not a new request architecture/queue.
+  const pendingBroadActions = new Set();
+
   let root = null;
   let els = null; // cached control references, built once with the root
 
@@ -180,28 +185,50 @@ export function createFogController({ engine, getSessionId, getView, frame, grid
 
   // --- broad actions --------------------------------------------------------------------------
 
+  /** Run `action` under a per-key pending guard: while a confirm/mutate cycle for `key` is still
+   * in flight, a repeat invocation is a no-op rather than opening a second confirmation or mutation
+   * (10F-FIX1 defect 3). The guard clears once `action` settles (confirmed-and-mutated, declined,
+   * or thrown), after which the action may run again normally. */
+  async function runPendingGuarded(key, action) {
+    if (pendingBroadActions.has(key)) return;
+    pendingBroadActions.add(key);
+    try {
+      await action();
+    } finally {
+      pendingBroadActions.delete(key);
+    }
+  }
+
   async function revealAll() {
-    const confirmed = await confirmAction({ action: 'reveal-all', message: 'Reveal the entire level to players? This immediately exposes the whole map.' });
-    if (!confirmed) return;
-    void submit(sessionId => bridge.revealAll(sessionId, { levelId: currentLevelId() }), 'fog.revealAll');
+    await runPendingGuarded('reveal-all', async () => {
+      const confirmed = await confirmAction({ action: 'reveal-all', message: 'Reveal the entire level to players? This immediately exposes the whole map.' });
+      if (!confirmed) return;
+      await submit(sessionId => bridge.revealAll(sessionId, { levelId: currentLevelId() }), 'fog.revealAll');
+    });
   }
 
   async function hideAll() {
-    const confirmed = await confirmAction({ action: 'hide-all', message: 'Hide the entire level from players? This immediately conceals the whole map.' });
-    if (!confirmed) return;
-    void submit(sessionId => bridge.hideAll(sessionId, { levelId: currentLevelId() }), 'fog.hideAll');
+    await runPendingGuarded('hide-all', async () => {
+      const confirmed = await confirmAction({ action: 'hide-all', message: 'Hide the entire level from players? This immediately conceals the whole map.' });
+      if (!confirmed) return;
+      await submit(sessionId => bridge.hideAll(sessionId, { levelId: currentLevelId() }), 'fog.hideAll');
+    });
   }
 
   async function resetDefaults() {
-    const confirmed = await confirmAction({ action: 'reset', message: 'Reset fog to its configured defaults? This restores the starting Hidden/Revealed layout for this level and cannot be undone.' });
-    if (!confirmed) return;
-    void submit(sessionId => bridge.resetDefaults(sessionId, { levelId: currentLevelId() }), 'fog.resetDefaults');
+    await runPendingGuarded('reset', async () => {
+      const confirmed = await confirmAction({ action: 'reset', message: 'Reset fog to its configured defaults? This restores the starting Hidden/Revealed layout for this level and cannot be undone.' });
+      if (!confirmed) return;
+      await submit(sessionId => bridge.resetDefaults(sessionId, { levelId: currentLevelId() }), 'fog.resetDefaults');
+    });
   }
 
   async function disableCampaignFog() {
-    const confirmed = await confirmAction({ action: 'disable-campaign', message: DISABLE_FOG_MESSAGE });
-    if (!confirmed) return;
-    void submit(sessionId => bridge.setCampaignEnabled(sessionId, { enabled: false }), 'fog.setCampaignEnabled');
+    await runPendingGuarded('disable-campaign', async () => {
+      const confirmed = await confirmAction({ action: 'disable-campaign', message: DISABLE_FOG_MESSAGE });
+      if (!confirmed) return;
+      await submit(sessionId => bridge.setCampaignEnabled(sessionId, { enabled: false }), 'fog.setCampaignEnabled');
+    });
   }
 
   function enableCampaignFog() {
@@ -528,25 +555,50 @@ export function createFogController({ engine, getSessionId, getView, frame, grid
     root.hidden = presentationMode !== 'dm' || !isManagerView(view);
   }
 
+  /** Manager-authority boundary (10F-FIX1 defect 1): deactivate paint interception, discard any
+   * uncommitted stroke preview, and discard any named-area draft. Called from `render(view)` the
+   * instant a view without manager authority arrives, and reused by `deactivate()` — the controller
+   * enforces this itself rather than relying solely on backend authorization (defense in depth). */
+  function suspendEditingForAuthorityLoss() {
+    editorActive = false;
+    editor.setActive(false); // cancels any in-progress stroke preview and disables pointer interception
+    if (els) els.toggle.textContent = 'Enter Fog Mode';
+    draft = null;
+    editor.setPurpose('fog');
+    editor.setSelectedCells([]);
+    if (els) renderAreaEditor();
+  }
+
+  /** Level-context boundary (10F-FIX1 defect 2): a named-area draft is only ever valid for the
+   * authoritative `levelId` it began under. If the manager's authoritative editing context moves to
+   * a different level, the draft is discarded immediately so a later Save can never redirect a
+   * Level A selection at Level B. A same-level authoritative refresh leaves a valid draft alone. */
+  function discardDraftIfLevelChanged(view) {
+    if (!draft) return;
+    const authoritativeLevelId = view?.fog?.levelId ?? null;
+    if (authoritativeLevelId !== null && authoritativeLevelId !== draft.levelId) {
+      endDraft();
+    }
+  }
+
   return {
     activate() {
       if (!root) buildDom();
     },
 
     deactivate() {
-      editorActive = false;
-      editor.setActive(false);
-      if (els) els.toggle.textContent = 'Enter Fog Mode';
-      draft = null;
-      editor.setPurpose('fog');
-      editor.setSelectedCells([]);
-      if (els) renderAreaEditor();
+      suspendEditingForAuthorityLoss();
       presentationMode = 'dm';
       if (root) root.hidden = true;
     },
 
     render(view) {
       editor.setFog(view?.fog ?? null);
+      if (isManagerView(view)) {
+        discardDraftIfLevelChanged(view);
+      } else {
+        suspendEditingForAuthorityLoss();
+      }
       if (!root) return;
       if (isManagerView(view)) {
         renderAreaList(view);
@@ -571,6 +623,7 @@ export function createFogController({ engine, getSessionId, getView, frame, grid
       if (disposed) return;
       disposed = true;
       draft = null;
+      pendingBroadActions.clear();
       editor.dispose();
       if (root?.parentNode) root.parentNode.removeChild(root);
       root = null;

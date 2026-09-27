@@ -114,6 +114,29 @@ function confirmSpy(result = true) {
   return fn;
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise(res => { resolve = res; });
+  return { promise, resolve };
+}
+
+/** A confirmAction double that never resolves on its own: each call gets its own deferred promise,
+ * collected in `deferreds` in call order, so a test can resolve exactly the confirmation it means
+ * to (10F-FIX1 defect 3 duplicate-action-guard tests). */
+function deferredConfirmSpy() {
+  const calls = [];
+  const deferreds = [];
+  const fn = request => {
+    calls.push(request);
+    const d = deferred();
+    deferreds.push(d);
+    return d.promise;
+  };
+  fn.calls = calls;
+  fn.deferreds = deferreds;
+  return fn;
+}
+
 function resultSpy() {
   const calls = [];
   const fn = result => calls.push(result);
@@ -125,14 +148,14 @@ function resultSpy() {
  * mirrors how app.js keeps `realtimeBoardView` and its `getView` closure in sync — every
  * `setView(view)` call updates both what `getView()` returns and what `controller.render()` sees,
  * exactly as `renderCurrent()` in app.js does for `realtimeBoardView`. */
-function buildHarness({ appliedRevision = '1', confirmResult = true } = {}) {
+function buildHarness({ appliedRevision = '1', confirmResult = true, confirmAction: confirmActionOverride } = {}) {
   return (async () => {
     const { engine, adapter } = await buildReadyEngine(appliedRevision);
     const { window, frame, grid, host, cellSize } = buildBoard();
     let currentView = null;
     const getSessionId = () => session;
     const getView = () => currentView;
-    const confirmAction = confirmSpy(confirmResult);
+    const confirmAction = confirmActionOverride ?? confirmSpy(confirmResult);
     const onResult = resultSpy();
     const controller = createFogController({ engine, getSessionId, getView, frame, grid, host, confirmAction, onResult });
     function setView(view) {
@@ -844,6 +867,229 @@ test("fog actions clicked while presentation mode is 'player' do nothing (struct
   await flush();
 
   assert.equal(commandsOfType(adapter, 'fog.revealAll').length, 0);
+});
+
+// --- 10F-FIX1 defect 1: manager authority loss deactivates the editor -------------------------
+
+test('manager authority loss during an in-progress stroke disables pointer interception immediately, and a later stray release emits no mutation', async () => {
+  const { window, host, frame, cellSize, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+
+  drag(window, canvas, cellSize, [[1, 1], [1, 2]]); // in-progress, uncommitted stroke
+
+  setView(playerView()); // authority lost mid-stroke (same level/dimensions as the manager view)
+  assert.equal(canvas.style.pointerEvents, 'none', 'pointer interception must be disabled the instant manager authority is lost');
+
+  release(window, canvas, cellSize, [1, 2]);
+  await flush();
+  assert.equal(adapter.calls.mutate.length, 0, 'a stray release after authority loss must never mutate');
+});
+
+test('manager authority loss discards an in-progress named-area draft and hides the area editor', async () => {
+  const { host, frame, cellSize, window, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  const root = host.querySelector('[data-fog-controller]');
+  root.querySelector('[data-fog-action="new-area"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+  drag(window, canvas, cellSize, [[2, 2]]);
+  release(window, canvas, cellSize, [2, 2]);
+  await flush();
+  assert.equal(root.querySelector('[data-fog-area-editor]').hidden, false, 'sanity: area editor open before authority loss');
+
+  setView(playerView());
+  assert.equal(root.querySelector('[data-fog-area-editor]').hidden, true, 'area draft must be discarded on authority loss');
+
+  root.querySelector('[data-fog-action="area-save"]').click();
+  await flush();
+  assert.equal(commandsOfType(adapter, 'fog.area.create').length, 0, 'a stray Save after authority loss must produce zero mutation');
+});
+
+test('manager -> non-manager -> manager returns to a clean authoritative state with no stale stroke/draft resurrection', async () => {
+  const { host, frame, cellSize, window, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView());
+  host.querySelector('[data-fog-action="toggle-fog-mode"]').click();
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+  drag(window, canvas, cellSize, [[3, 3]]); // uncommitted
+
+  setView(playerView());
+  setView(managerView()); // manager authority regained
+
+  release(window, canvas, cellSize, [3, 3]);
+  await flush();
+  assert.equal(adapter.calls.mutate.length, 0, 'no stale stroke must be resurrected on manager regain');
+
+  const root = host.querySelector('[data-fog-controller]');
+  assert.equal(root.hidden, false, 'manager view is visible again');
+  assert.equal(root.querySelector('[data-fog-action="toggle-fog-mode"]').textContent, 'Enter Fog Mode', 'editor is not auto-reactivated with stale state');
+  assert.equal(root.querySelector('[data-fog-area-editor]').hidden, true, 'no stale area draft must be resurrected');
+});
+
+// --- 10F-FIX1 defect 2: named-area draft is scoped to its authoritative levelId ----------------
+
+test('a New Area draft is discarded when the authoritative manager view switches to a different levelId, and a stray Save after the switch produces zero mutation', async () => {
+  const { host, frame, cellSize, window, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView({ fog: fogProjection({ levelId }) }));
+  const root = host.querySelector('[data-fog-controller]');
+  root.querySelector('[data-fog-action="new-area"]').click();
+  root.querySelector('[data-fog-field="area-name"]').value = 'Level A Room';
+  root.querySelector('[data-fog-field="area-name"]').dispatchEvent(new window.Event('input', { bubbles: true }));
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+  drag(window, canvas, cellSize, [[2, 2]]);
+  release(window, canvas, cellSize, [2, 2]);
+  await flush();
+
+  setView(managerView({ fog: fogProjection({ levelId: otherLevelId }) })); // authoritative context moves to Level B
+
+  assert.equal(root.querySelector('[data-fog-area-editor]').hidden, true, 'the Level A draft must be discarded on the level switch');
+
+  root.querySelector('[data-fog-action="area-save"]').click();
+  await flush();
+  assert.equal(commandsOfType(adapter, 'fog.area.create').length, 0, 'a stray Save after the context switch must produce zero mutation');
+});
+
+test('an Edit Area draft is discarded when the authoritative manager view switches to a different levelId, and a stray Save after the switch produces zero mutation', async () => {
+  const { host, frame, cellSize, window, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  const area = { id: 'area-1', levelId, name: 'Old Name', cellRuns: [[0, 0, 2]], revealedByDefault: false, status: 'Hidden' };
+  setView(managerView({ fog: fogProjection({ levelId }), dm: { fog: fogManagerState({ areas: [area] }) } }));
+  const root = host.querySelector('[data-fog-controller]');
+  root.querySelector('[data-fog-action="area-edit"][data-area-id="area-1"]').click();
+  assert.equal(root.querySelector('[data-fog-field="area-name"]').value, 'Old Name');
+
+  setView(managerView({ fog: fogProjection({ levelId: otherLevelId }), dm: { fog: fogManagerState({ areas: [area] }) } }));
+
+  assert.equal(root.querySelector('[data-fog-area-editor]').hidden, true, 'the Level A edit draft must be discarded on the level switch');
+
+  root.querySelector('[data-fog-action="area-save"]').click();
+  await flush();
+  assert.equal(commandsOfType(adapter, 'fog.area.update').length, 0, 'a stray Save after the context switch must produce zero mutation');
+});
+
+test('after a level-switch discard, the new level starts a completely fresh draft: no leaked Level A name, default, or cells', async () => {
+  const { host, frame, cellSize, window, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView({ fog: fogProjection({ levelId }) }));
+  const root = host.querySelector('[data-fog-controller]');
+  root.querySelector('[data-fog-action="new-area"]').click();
+  root.querySelector('[data-fog-field="area-name"]').value = 'Level A Room';
+  root.querySelector('[data-fog-field="area-name"]').dispatchEvent(new window.Event('input', { bubbles: true }));
+  root.querySelector('[data-fog-field="area-default"][value="revealed"]').checked = true;
+  root.querySelector('[data-fog-field="area-default"][value="revealed"]').dispatchEvent(new window.Event('change', { bubbles: true }));
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+  drag(window, canvas, cellSize, [[2, 2]]);
+  release(window, canvas, cellSize, [2, 2]);
+  await flush();
+
+  setView(managerView({ fog: fogProjection({ levelId: otherLevelId }) }));
+
+  root.querySelector('[data-fog-action="new-area"]').click();
+  assert.equal(root.querySelector('[data-fog-field="area-name"]').value, '', 'fresh draft must not carry the Level A name');
+  assert.equal(root.querySelector('[data-fog-field="area-default"][value="hidden"]').checked, true, 'fresh draft must default to Hidden, not the Level A leftover');
+
+  drag(window, canvas, cellSize, [[9, 9]]);
+  release(window, canvas, cellSize, [9, 9]);
+  await flush();
+  root.querySelector('[data-fog-action="area-save"]').click();
+  await flush();
+
+  const creates = commandsOfType(adapter, 'fog.area.create');
+  assert.equal(creates.length, 1);
+  assert.equal(creates[0].command.payload.levelId, otherLevelId);
+  assert.deepEqual(creates[0].command.payload.cells, [[9, 9]], 'no Level A cells must leak into the Level B draft');
+});
+
+test('a same-level authoritative refresh does not discard a valid, in-progress named-area draft', async () => {
+  const { host, frame, cellSize, window, controller, setView, adapter } = await buildHarness();
+  controller.activate();
+  setView(managerView({ fog: fogProjection({ levelId }) }));
+  const root = host.querySelector('[data-fog-controller]');
+  root.querySelector('[data-fog-action="new-area"]').click();
+  root.querySelector('[data-fog-field="area-name"]').value = 'Still Editing';
+  root.querySelector('[data-fog-field="area-name"]').dispatchEvent(new window.Event('input', { bubbles: true }));
+  const canvas = frame.querySelector('canvas.fog-editor-canvas');
+  drag(window, canvas, cellSize, [[4, 4]]);
+  release(window, canvas, cellSize, [4, 4]);
+  await flush();
+
+  // Same-level authoritative refresh (e.g. a revision bump from an unrelated change), not a level switch.
+  setView(managerView({ fog: fogProjection({ levelId, revealedRuns: [[0, 0, 1]] }) }));
+
+  assert.equal(root.querySelector('[data-fog-area-editor]').hidden, false, 'a valid draft must survive a same-level refresh');
+  assert.equal(root.querySelector('[data-fog-field="area-name"]').value, 'Still Editing');
+
+  root.querySelector('[data-fog-action="area-save"]').click();
+  await flush();
+  const creates = commandsOfType(adapter, 'fog.area.create');
+  assert.equal(creates.length, 1);
+  assert.equal(creates[0].command.payload.levelId, levelId);
+});
+
+// --- 10F-FIX1 defect 3: duplicate broad-action requests while confirmation is pending ----------
+
+for (const { action, type } of [
+  { action: 'reveal-all', type: 'fog.revealAll' },
+  { action: 'hide-all', type: 'fog.hideAll' },
+  { action: 'reset', type: 'fog.resetDefaults' },
+]) {
+  test(`${action}: a second click while its confirmation is pending is ignored; after that attempt settles, a new click proceeds normally`, async () => {
+    const confirmAction = deferredConfirmSpy();
+    const { host, setView, controller, adapter } = await buildHarness({ confirmAction });
+    controller.activate();
+    setView(managerView());
+    const button = host.querySelector(`[data-fog-action="${action}"]`);
+
+    button.click();
+    assert.equal(confirmAction.calls.length, 1, 'first click enters the pending state');
+
+    button.click();
+    await flush();
+    assert.equal(confirmAction.calls.length, 1, 'a rapid second click must not open a second confirmation while the first is pending');
+    assert.equal(commandsOfType(adapter, type).length, 0, 'no mutation yet: the first confirmation has not resolved');
+
+    confirmAction.deferreds[0].resolve(true);
+    await flush();
+    assert.equal(commandsOfType(adapter, type).length, 1, 'the first confirmed attempt proceeds to exactly one mutation');
+
+    button.click();
+    await flush();
+    assert.equal(confirmAction.calls.length, 2, 'once the pending attempt has settled, a new click opens a new confirmation');
+    confirmAction.deferreds[1].resolve(true);
+    await flush();
+    assert.equal(commandsOfType(adapter, type).length, 2, 'the second attempt after settling produces its own mutation');
+  });
+}
+
+test('Disable Fog: a second click while its confirmation is pending is ignored; after that attempt settles, a new click proceeds normally', async () => {
+  const confirmAction = deferredConfirmSpy();
+  const { host, setView, controller, adapter } = await buildHarness({ confirmAction });
+  controller.activate();
+  setView(managerView());
+  const button = host.querySelector('[data-fog-action="disable-campaign"]');
+
+  button.click();
+  assert.equal(confirmAction.calls.length, 1);
+
+  button.click();
+  await flush();
+  assert.equal(confirmAction.calls.length, 1, 'a rapid second click must not open a second confirmation while the first is pending');
+  assert.equal(commandsOfType(adapter, 'fog.setCampaignEnabled').length, 0);
+
+  confirmAction.deferreds[0].resolve(true);
+  await flush();
+  assert.equal(commandsOfType(adapter, 'fog.setCampaignEnabled').length, 1);
+
+  button.click();
+  await flush();
+  assert.equal(confirmAction.calls.length, 2, 'once the pending attempt has settled, a new click opens a new confirmation');
+  confirmAction.deferreds[1].resolve(true);
+  await flush();
+  assert.equal(commandsOfType(adapter, 'fog.setCampaignEnabled').length, 2);
 });
 
 // --- dispose -------------------------------------------------------------------------------

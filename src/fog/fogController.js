@@ -189,12 +189,24 @@ export function createFogController({ engine, getSessionId, getView, frame, grid
     endDraft();
   }
 
+  /** Delete Area's target context is `{ areaId, levelId }`, captured before the confirmation gap
+   * exactly like `runLevelScopedBroadAction` captures a broad action's `levelId` (10F-FIX3). If the
+   * area object already carries a server-provided `levelId`, it is trusted only when it agrees with
+   * the current authoritative manager view — never taken on faith over the authoritative context.
+   * After the confirmation resolves, authority and that captured `levelId` are both revalidated
+   * against the *current* view before `submit()`: a stale Level A delete whose authoritative context
+   * has since moved to Level B aborts with zero mutation instead of deleting Area A under Level B's
+   * (or anyone's) authority, rather than silently retargeting. */
   async function deleteArea(area) {
-    if (!currentManagerView()) return; // pre-confirm authority check
-    const levelId = area.levelId ?? currentLevelId(); // captured before the confirmation gap, never re-read after
+    const managerView = currentManagerView();
+    if (!managerView) return; // pre-confirm authority check
+    const authoritativeLevelId = managerView.fog?.levelId ?? null;
+    if (area.levelId != null && area.levelId !== authoritativeLevelId) return; // area does not belong to the current authoritative level; not a valid target
+    const levelId = area.levelId ?? authoritativeLevelId;
     const confirmed = await confirmAction({ action: 'area-delete', message: `Delete the named area "${area.name}"? This removes the saved selection but does not change current fog visibility.` });
     if (!confirmed) return;
-    if (!currentManagerView()) return; // post-confirm authority check: authority may have been lost while the confirmation was open
+    const stillManagerView = currentManagerView();
+    if (!stillManagerView || (stillManagerView.fog?.levelId ?? null) !== levelId) return; // post-confirm authority + context check
     void submit(sessionId => bridge.deleteArea(sessionId, { levelId, areaId: area.id }), 'fog.area.delete');
   }
 

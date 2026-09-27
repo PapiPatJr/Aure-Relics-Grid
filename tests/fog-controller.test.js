@@ -1256,6 +1256,73 @@ test('Hide All: a same-level authoritative refresh while confirmation is pending
   assert.equal(calls[0].command.payload.levelId, levelId);
 });
 
+// --- 10F-FIX3: Delete Area must revalidate authoritative level context after confirmation ------
+
+test('Delete Area: switching the authoritative level to Level B while a Level A delete confirmation is pending aborts with zero mutation against either level', async () => {
+  const confirmAction = deferredConfirmSpy();
+  const { host, setView, controller, adapter } = await buildHarness({ confirmAction });
+  controller.activate();
+  const areaA = { id: 'area-a', levelId, name: 'Room A', cellRuns: [], revealedByDefault: false, status: 'Hidden' };
+  setView(managerView({ fog: fogProjection({ levelId }), dm: { fog: fogManagerState({ areas: [areaA] }) } }));
+  host.querySelector('[data-fog-action="area-delete"][data-area-id="area-a"]').click();
+  assert.equal(confirmAction.calls.length, 1);
+
+  setView(managerView({ fog: fogProjection({ levelId: otherLevelId }), dm: { fog: fogManagerState({ areas: [] }) } })); // authoritative context moves to Level B
+
+  confirmAction.deferreds[0].resolve(true);
+  await flush();
+
+  assert.equal(commandsOfType(adapter, 'fog.area.delete').length, 0, 'a Level A delete confirmation must never silently retarget Level B, and must not delete Area A once the level has moved on');
+});
+
+test('Delete Area: after a stale Level A delete aborts, a fresh delete for a valid Level B area works normally and targets the correct area/level', async () => {
+  const confirmAction = deferredConfirmSpy();
+  const { host, setView, controller, adapter } = await buildHarness({ confirmAction });
+  controller.activate();
+  const areaA = { id: 'area-a', levelId, name: 'Room A', cellRuns: [], revealedByDefault: false, status: 'Hidden' };
+  setView(managerView({ fog: fogProjection({ levelId }), dm: { fog: fogManagerState({ areas: [areaA] }) } }));
+  host.querySelector('[data-fog-action="area-delete"][data-area-id="area-a"]').click();
+
+  const areaB = { id: 'area-b', levelId: otherLevelId, name: 'Room B', cellRuns: [], revealedByDefault: false, status: 'Hidden' };
+  setView(managerView({ fog: fogProjection({ levelId: otherLevelId }), dm: { fog: fogManagerState({ areas: [areaB] }) } }));
+
+  confirmAction.deferreds[0].resolve(true);
+  await flush();
+  assert.equal(commandsOfType(adapter, 'fog.area.delete').length, 0, 'sanity: the stale Level A delete must have aborted');
+
+  const root = host.querySelector('[data-fog-controller]');
+  root.querySelector('[data-fog-action="area-delete"][data-area-id="area-b"]').click();
+  await flush();
+  assert.equal(confirmAction.calls.length, 2, 'a fresh delete opens its own confirmation after the stale one settled');
+  confirmAction.deferreds[1].resolve(true);
+  await flush();
+
+  const calls = commandsOfType(adapter, 'fog.area.delete');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command.payload.areaId, 'area-b');
+  assert.equal(calls[0].command.payload.levelId, otherLevelId);
+});
+
+test('Delete Area: a same-level authoritative refresh while confirmation is pending does not abort a still-valid delete', async () => {
+  const confirmAction = deferredConfirmSpy();
+  const { host, setView, controller, adapter } = await buildHarness({ confirmAction });
+  controller.activate();
+  const areaA = { id: 'area-a', levelId, name: 'Room A', cellRuns: [], revealedByDefault: false, status: 'Hidden' };
+  setView(managerView({ fog: fogProjection({ levelId }), dm: { fog: fogManagerState({ areas: [areaA] }) } }));
+  host.querySelector('[data-fog-action="area-delete"][data-area-id="area-a"]').click();
+
+  // Fresh authoritative snapshot, still Level A (e.g. an unrelated revision bump), not a level switch.
+  setView(managerView({ fog: fogProjection({ levelId, revealedRuns: [[0, 0, 1]] }), dm: { fog: fogManagerState({ areas: [areaA] }) } }));
+
+  confirmAction.deferreds[0].resolve(true);
+  await flush();
+
+  const calls = commandsOfType(adapter, 'fog.area.delete');
+  assert.equal(calls.length, 1, 'a same-level refresh during confirmation must not block a still-valid delete');
+  assert.equal(calls[0].command.payload.areaId, 'area-a');
+  assert.equal(calls[0].command.payload.levelId, levelId);
+});
+
 // --- dispose -------------------------------------------------------------------------------
 
 test('dispose() removes the toolbar DOM and the editor overlay canvas, and is idempotent', async () => {

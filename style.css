@@ -683,15 +683,34 @@ body[data-scene-theme="cityCobblestone"] {
   z-index: 20;
   min-width: 0;
   min-height: 0;
+  height: 100%;
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   gap: 7px;
   padding: 14px 12px;
   margin: 0;
-  overflow: visible;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--grid-frame) transparent;
+}
+
+.hud-rail-count {
+  position: sticky;
+  top: -14px;
+  z-index: 46;
+  flex: 0 0 auto;
+  margin: -14px -12px 0;
+  padding: 6px 12px 5px;
+  color: var(--gold-bright);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, rgba(12, 9, 6, 0.97) 65%, rgba(12, 9, 6, 0));
+  pointer-events: none;
 }
 
 .player-hud-rail {
@@ -1250,11 +1269,21 @@ body[data-scene-theme="cityCobblestone"] {
   }
 
   .hud-rail {
+    height: auto;
+    max-height: none;
     overflow: visible;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     padding: 8px;
     margin: 0;
+  }
+
+  .hud-rail-count {
+    position: static;
+    grid-column: 1 / -1;
+    margin: 0 0 2px;
+    padding: 0;
+    background: none;
   }
 
   .sidebar,

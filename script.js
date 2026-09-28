@@ -1577,8 +1577,19 @@ function applyActiveHighlights() {
   });
 }
 
+function createRailCountHeader(label, count) {
+  const header = document.createElement("div");
+  header.className = "hud-rail-count";
+  header.textContent = `${label} · ${count}`;
+  return header;
+}
+
 function renderPlayerHud(players) {
   elements.playerStatusBoard.innerHTML = "";
+
+  if (players.length > 0) {
+    elements.playerStatusBoard.appendChild(createRailCountHeader("Players", players.length));
+  }
 
   players.slice(0, MAX_PLAYERS).forEach(label => {
     const data = ensureTokenData(label);
@@ -1622,6 +1633,10 @@ function renderPlayerHud(players) {
 
 function renderOpponentHud(opponents) {
   elements.enemyStatusStrip.innerHTML = "";
+
+  if (opponents.length > 0) {
+    elements.enemyStatusStrip.appendChild(createRailCountHeader("Opponents", opponents.length));
+  }
 
   opponents.forEach(label => {
     const type = getTokenType(label);
@@ -2406,6 +2421,21 @@ function handleNextTurn() {
   const activeName = getActiveMembers().map(getCompactLabel).join(" / ");
   addHistoryLog(`Next turn: ${activeName}.`);
   refreshCombatUI();
+  scrollActiveCardsIntoView();
+}
+
+function scrollActiveCardsIntoView() {
+  const activeMembers = new Set(getActiveMembers());
+
+  [elements.playerStatusBoard, elements.enemyStatusStrip].forEach(rail => {
+    const activeCard = Array.from(rail.children).find(
+      child => child.classList.contains("hud-card") && activeMembers.has(child.dataset.tokenId)
+    );
+
+    if (activeCard) {
+      activeCard.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  });
 }
 
 function scheduleGridFit() {

@@ -25,7 +25,17 @@
  * Elements are created via container.ownerDocument (never the bare global `document`) so this
  * module works against any document a caller's container belongs to, including a detached jsdom
  * document in tests.
+ *
+ * Issue #10 Task 4: whenever `displayView.fog` is present, `presentationMode === 'player'` also
+ * mounts the shared player fog stage via `fogRenderer.buildPlayerFogStage` — the same call for
+ * both the real Player Screen and the DM's read-only Player Preview, since both reach this
+ * function with `presentationMode: 'player'`. This is deliberately gated on `presentationMode`,
+ * not `interactionMode`: fog concealment applies to a real interactive player exactly as much as
+ * to the DM's read-only preview of what a player sees. `presentationMode: 'dm'` never mounts it —
+ * the DM's own live board is the separate, unmodified legacy `script.js` board, not this renderer.
  */
+
+import { buildPlayerFogStage } from '../fog/fogRenderer.js';
 
 function createActionButton(doc, action, label, dataset = {}) {
   const button = doc.createElement('button');
@@ -134,12 +144,17 @@ export function renderBoardView(container, displayView, options) {
   container.hidden = false;
   container.innerHTML = '';
 
-  const { roundNumber, tokens, characters, initiative, authority, dm } = displayView;
+  const { roundNumber, tokens, characters, initiative, authority, dm, fog } = displayView;
   const canManageHere = !readOnly && presentationMode === 'dm' && Boolean(authority?.canManage);
 
   const heading = doc.createElement('h3');
   heading.textContent = `Online session — Round ${roundNumber ?? '—'}`;
   container.appendChild(heading);
+
+  if (presentationMode === 'player' && fog) {
+    const stage = buildPlayerFogStage(doc, fog);
+    if (stage) container.appendChild(stage);
+  }
 
   if (canManageHere) {
     container.appendChild(createActionButton(doc, 'advance-round', 'Advance round'));

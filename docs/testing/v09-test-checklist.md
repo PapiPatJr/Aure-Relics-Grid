@@ -80,18 +80,34 @@ Use this checklist before calling v0.9 ready for final testing.
 
 ## Fog of War
 
-- [ ] Fog can be enabled/disabled by DM.
-- [ ] Fog default can be set at campaign/location/level scope.
+- [ ] Fog can be enabled/disabled by DM (Disable Fog always requires confirmation in v0.9 — see Known Limitations in `docs/testing/issue-10-verification.md`).
+- [ ] Fog default can be set at campaign/location/level scope (On/Off/Inherit).
 - [ ] DM can reveal individual cells.
 - [ ] DM can hide individual cells.
+- [ ] Brush sizes 1x1, 2x2, 3x3, and 5x5 all paint correctly, including at board edges/corners.
+- [ ] Holding Shift temporarily inverts Reveal/Hide for the current stroke only.
+- [ ] Brush drag previews locally to the DM only and commits as one atomic mutation on release.
 - [ ] DM can create irregular cell-by-cell fog area.
 - [ ] DM can name fog area.
-- [ ] DM can reveal fog area.
-- [ ] DM can hide fog area.
-- [ ] DM can clear all fog.
-- [ ] Fog saves and reloads.
-- [ ] Player only sees revealed areas.
+- [ ] DM can reveal fog area (no confirmation).
+- [ ] DM can hide fog area (no confirmation).
+- [ ] Named-area status (Hidden/Revealed/Mixed) reflects actual server-side cell state, not the editor's local selection.
+- [ ] Editing a named area's name/cells/default does not change current live fog until an explicit action.
+- [ ] Reveal All, Hide All, and Reset to Defaults each require confirmation, replacing the old "Clear all fog" control.
+- [ ] Reset to Defaults applies Hidden-everywhere, then Revealed-by-Default areas, then Hidden-by-Default areas (Hidden wins on overlap).
+- [ ] Disable/re-enable Fog preserves the exact stored mask — re-enabling never resets or replaces it.
+- [ ] Fog saves and reloads/reconnects to the exact current state, never a default/guessed mask.
+- [ ] Fog persists across sessions (a level's fog state survives leaving and returning).
+- [ ] Player only sees revealed areas of the currently presented level; no other level's mask is ever sent.
 - [ ] Hidden enemies/traps inside fog stay hidden.
+- [ ] Fog and DM object-disclosure are independent: disabling fog never discloses a DM-hidden object, and hidden objects stay hidden regardless of fog state.
+- [ ] Player-facing snapshot/DOM never contains named-area definitions, area names/defaults, or other DM fog-management metadata (verified against the actual authorized projection, not just "not rendered").
+- [ ] Hidden fog cells are fully visually opaque on the real Player Screen, with no color/silhouette bleed at cell boundaries.
+- [ ] The DM-only gold management frontier never appears on the real Player Screen or DM Player Preview.
+- [ ] DM Player Preview's fog rendering matches the real Player Screen exactly for the same snapshot (shared renderer).
+- [ ] A second/stale manager window's mutation is rejected on a revision conflict, rehydrates, and is never silently replayed.
+- [ ] Editing fog on a non-presented level updates only DM-side management data and never shifts or leaks to the currently presented players.
+- [ ] A 200x200 (maximum) level: Reveal All/Hide All/Reset complete without a per-cell realtime storm, the player payload stays a compact row-run mask (not one object per cell), and player rendering stays canvas-based (not one DOM node per cell).
 
 ## Terrain
 

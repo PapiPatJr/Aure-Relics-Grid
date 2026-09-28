@@ -1,0 +1,174 @@
+/*
+ * Player-facing fog stage (Issue #10 Task 4). Rendered only by src/fog/fogRenderer.js's
+ * buildPlayerFogStage(), from the single presentation path shared by the real Player Screen and
+ * the DM's read-only Player Preview (see src/board/boardViewRenderer.js). The actual fog
+ * concealment/reveal is drawn on the canvas by JS, not by any CSS color/opacity/filter rule here
+ * — nothing in this file may become part of the security boundary. This stylesheet only ever
+ * lays the stage out and sizes it; it never targets ".fog-player-canvas" with an opacity, filter,
+ * blend-mode or transform that could soften or bypass what the canvas already decided to draw.
+ *
+ * The DM fog-management overlay/frontier (renderManagementFog) has no styling here yet — it is
+ * not wired into any DM UI in this package (Issue #10E/10F).
+ *
+ * `.fog-player-canvas`'s `image-rendering` IS part of the security boundary, unlike every other
+ * rule here (10D-FIX): the canvas is always backed at exactly one native pixel per board cell
+ * (src/fog/fogRenderer.js buildPlayerFogStage) and then displayed at whatever CSS size the layout
+ * needs, which is almost never an exact integer multiple of the board's cell count. Without a
+ * pinned nearest-neighbor scale, the browser's default smoothed magnification blends each opaque
+ * fog pixel with its transparent revealed-cell neighbor at the boundary, leaking a sliver of
+ * whatever sits underneath into a cell that must stay fully hidden. `pixelated` is a reliably
+ * filter-free nearest-neighbor magnification in every evergreen browser, so a destination pixel
+ * always samples exactly one source pixel — never a blend of opaque and transparent — regardless
+ * of the CSS/board scale ratio. See tests/e2e/fog-pixel.spec.js for the regression.
+ */
+
+.fog-player-stage {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: var(--fog-cols, 1) / var(--fog-rows, 1);
+  overflow: hidden;
+  border: 1px solid var(--border-dark, #4c3b22);
+  background: var(--ink-black, #080705);
+}
+
+.fog-player-stage-base {
+  position: absolute;
+  inset: 0;
+  background: var(--panel, #18130d);
+}
+
+.fog-player-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: -webkit-crisp-edges;
+  image-rendering: pixelated;
+}
+
+/*
+ * DM-only Fog Mode editor overlay (Issue #10E, src/fog/fogEditor.js). Attached as a sibling to
+ * `#grid` inside `.grid-frame` — never appended inside `#grid` itself, which is a CSS Grid whose
+ * children are the legacy cell/token layout — and sits above it via `z-index` so it can own
+ * pointer painting while Fog Mode is active. Only static layout lives here: `fogEditor.js` sets
+ * `left`/`top`/`width`/`height` at runtime to track `#grid`'s live position/size, and toggles
+ * `pointer-events` between `none`/`auto` as Fog Mode is entered/exited (design §6 — inactive Fog
+ * Mode must not intercept normal board interaction at all). Concealment/frontier/preview pixels
+ * are drawn by JS (`renderManagementFog`), never by a CSS color/opacity/filter rule here, the same
+ * separation `.fog-player-canvas` above already keeps.
+ *
+ * No `touch-action` override (10E-FIX defect 3): design §6 requires board pan/zoom to remain
+ * available while Fog Mode is active, and this overlay covers the entire board, not one small
+ * draggable target — unlike `.freeform-terrain` in style.css, which sets `touch-action: none` only
+ * on the individual object actually being touch-dragged. A blanket `touch-action: none` here would
+ * disable native touch panning/pinch-zoom over the whole board for as long as Fog Mode is active,
+ * which is exactly what QA reproduced. Leaving `touch-action` at its default `auto` lets the
+ * browser take over an in-progress touch gesture as a scroll/pan whenever it recognizes one; when
+ * it does, it fires `pointercancel` at the canvas, which `fogEditor.js` already handles by
+ * discarding the uncommitted stroke without emitting `onStroke` — the exact same path Escape and
+ * mode-exit use. Fog painting and native touch navigation coexist through that existing cancel
+ * path rather than a second gesture-arbitration system here.
+ */
+.fog-editor-canvas {
+  position: absolute;
+  z-index: 5;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: -webkit-crisp-edges;
+  image-rendering: pixelated;
+}
+
+/*
+ * DM Fog Mode controller toolbar (Issue #10F, src/fog/fogController.js). Appended as an ordinary
+ * `<details>` section inside `#sidebarPanel` (`.sidebar`), so it already inherits that panel's
+ * existing `.sidebar details` / `.sidebar summary` / `.sidebar details button,input,select`
+ * cascade (style.css) — everything here only adds the small amount of layout `.sidebar details`
+ * doesn't already cover (button rows, the area list, the campaign status row), and never
+ * redesigns the shared sidebar chrome itself.
+ */
+.fog-tool-group,
+.fog-brush-group,
+.fog-broad-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.fog-tool-group button,
+.fog-brush-group button,
+.fog-broad-group button {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.fog-tool-group button[aria-pressed="true"],
+.fog-brush-group button[aria-pressed="true"] {
+  border-color: var(--gold, #c9a95c);
+  background: rgba(201, 169, 92, 0.22);
+  color: var(--gold-bright, #f5d98b);
+}
+
+.fog-area-list {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.fog-area-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border-dark, #4c3b22);
+  border-radius: 4px;
+}
+
+.fog-area-list li span {
+  flex: 1 1 100%;
+  color: var(--gold, #c9a95c);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.fog-area-list li button {
+  width: auto;
+  flex: 1 1 auto;
+  margin-top: 0;
+  font-size: 11px;
+}
+
+.fog-area-default {
+  border: 0;
+  margin: 6px 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  color: var(--gold, #c9a95c);
+  font-size: 12px;
+}
+
+.fog-area-default label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fog-campaign-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: var(--gold, #c9a95c);
+  font-size: 12px;
+}
+
+.fog-campaign-row button {
+  width: auto;
+  margin-top: 0;
+}

@@ -1,0 +1,59 @@
+<!doctype html>
+<!--
+  Standalone harness for tests/e2e/fog-pixel.spec.js (Issue #10D-FIX). Not part of the app entry
+  (index.html) or any route — it exists only to reproduce the QA scaled-canvas leak in a real
+  browser, isolated from Supabase/session/auth concerns entirely. It renders exactly one thing:
+  src/fog/fogRenderer.js's shared player fog stage, stretched to a CSS size that is not an exact
+  integer multiple of the 200x200 board (the reported repro ratio), over a full-bleed magenta
+  "substrate" standing in for whatever real content (future map art, per the fog design doc)
+  would sit beneath the fog layer. `.fog-player-stage-base`'s own placeholder background is
+  forced transparent below so magenta is the *only* thing a leak could expose.
+-->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body { margin: 0; padding: 0; }
+    #substrate { position: fixed; inset: 0; background: #ff00ff; }
+    /* Both the stage's own placeholder background and its base substrate layer must be forced
+       transparent for this harness: otherwise a punched-through canvas pixel would reveal one of
+       those inert placeholder colors instead of the magenta #substrate sitting behind the whole
+       stage, defeating the point of the leak test. */
+    .fog-player-stage { background: transparent !important; }
+    .fog-player-stage-base { background: transparent !important; }
+  </style>
+</head>
+<body>
+  <div id="substrate"></div>
+  <script type="module">
+    import { buildPlayerFogStage } from '/src/fog/fogRenderer.js';
+    import '/src/fog/fog.css';
+
+    const params = new URLSearchParams(location.search);
+    const size = Number(params.get('size')) || 303;
+    const boardWidth = Number(params.get('width')) || 200;
+    const boardHeight = Number(params.get('height')) || 200;
+    const revealX = Number(params.get('revealX')) || Math.floor(boardWidth / 2);
+    const revealY = Number(params.get('revealY')) || Math.floor(boardHeight / 2);
+
+    const fog = {
+      levelId: 'fog-pixel-harness-level',
+      width: boardWidth,
+      height: boardHeight,
+      enabled: true,
+      revealedRuns: [[revealY, revealX, revealX + 1]],
+    };
+
+    const stage = buildPlayerFogStage(document, fog);
+    stage.style.position = 'fixed';
+    stage.style.top = '0';
+    stage.style.left = '0';
+    stage.style.width = `${size}px`;
+    stage.style.height = `${size}px`;
+    stage.style.border = 'none';
+    document.body.appendChild(stage);
+
+    window.__fogPixelHarness = { boardWidth, boardHeight, revealX, revealY, size, ready: true };
+  </script>
+</body>
+</html>

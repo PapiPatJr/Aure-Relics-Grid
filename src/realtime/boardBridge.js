@@ -30,6 +30,9 @@ const stableTokenKey = token => `${token?.kind ?? ''}\u0000${token?.label ?? ''}
  * @property {object[]} characters
  * @property {object[]} initiative
  * @property {object|null} dm
+ * @property {import('./types.js').FogProjection|null} fog The active presented level's fog
+ *   projection (Issue #10), passed through exactly as the snapshot gives it — never recomputed,
+ *   re-authorized, or defaulted to anything but `null` when absent.
  */
 
 /**
@@ -57,6 +60,7 @@ export function createBoardView(snapshot) {
     initiative: Array.isArray(snapshot.initiative) ? [...snapshot.initiative] : [],
     // Never fabricated when absent; passed through exactly as given when present.
     dm: snapshot.dm ?? null,
+    fog: snapshot.fog ?? null,
   };
 }
 

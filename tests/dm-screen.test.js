@@ -349,6 +349,68 @@ test('integrated mutation-boundary: clicking anywhere in the DM preview panel ca
   assert.equal(mutateCalls.length, 0, 'no element in the DM preview panel is an actionable [data-realtime-action] control');
 });
 
+// --- onPresentationModeChange (Issue #10F): optional, additive, presentation-only notice ---
+
+test('onPresentationModeChange fires with the new mode when setPresentationMode actually changes it', async t => {
+  const { container } = withDom(t);
+  const { createDmScreen } = await import('../src/screens/dm-screen.js');
+  const modes = [];
+  const screen = createDmScreen({ apply: spy(), container, onPresentationModeChange: mode => modes.push(mode) });
+  screen.activate();
+
+  screen.render(dmShapedView());
+  assert.deepEqual(modes, [], 'render() alone must never fire the presentation-mode callback');
+
+  screen.setPresentationMode('player');
+  assert.deepEqual(modes, ['player']);
+
+  screen.setPresentationMode('dm');
+  assert.deepEqual(modes, ['player', 'dm']);
+});
+
+test('onPresentationModeChange does not fire for a redundant setPresentationMode to the current mode', async t => {
+  const { container } = withDom(t);
+  const { createDmScreen } = await import('../src/screens/dm-screen.js');
+  const modes = [];
+  const screen = createDmScreen({ apply: spy(), container, onPresentationModeChange: mode => modes.push(mode) });
+  screen.activate();
+
+  screen.setPresentationMode('dm'); // already dm
+  assert.deepEqual(modes, []);
+
+  screen.setPresentationMode('player');
+  screen.setPresentationMode('player'); // already player
+  assert.deepEqual(modes, ['player']);
+});
+
+test('onPresentationModeChange also fires from the toggle button click, not only the direct API', async t => {
+  const { container } = withDom(t);
+  const { createDmScreen } = await import('../src/screens/dm-screen.js');
+  const modes = [];
+  const screen = createDmScreen({ apply: spy(), container, onPresentationModeChange: mode => modes.push(mode) });
+  screen.activate();
+  screen.render(dmShapedView());
+
+  container.querySelector('button').click();
+  assert.deepEqual(modes, ['player']);
+});
+
+test('onPresentationModeChange is optional: omitting it entirely never throws', async t => {
+  const { container } = withDom(t);
+  const { createDmScreen } = await import('../src/screens/dm-screen.js');
+  const screen = createDmScreen({ apply: spy(), container });
+  screen.activate();
+  assert.doesNotThrow(() => screen.setPresentationMode('player'));
+  assert.doesNotThrow(() => screen.setPresentationMode('dm'));
+});
+
+test('structural guarantee still holds with the new callback wired: dm-screen.js source contains none of the forbidden realtime-hydration identifiers, and no mutation-bridge/engine import was added', () => {
+  const source = readFileSync(SOURCE_PATH, 'utf8');
+  for (const forbidden of [...FORBIDDEN, 'fogMutations', 'createFogController', 'engine.mutate']) {
+    assert.ok(!source.includes(forbidden), `${SOURCE_PATH} must not reference "${forbidden}"`);
+  }
+});
+
 test('regression: toggling immediately after render(null) (denied state) is safe and never fabricates content', async t => {
   const { dom, container } = withDom(t);
   const { createDmScreen } = await import('../src/screens/dm-screen.js');

@@ -7,6 +7,7 @@ import { reconcileBoardView } from '../realtime/boardBridge.js';
 import { wireRealtimeBoardActions } from '../realtime/boardActions.js';
 import { mountPlayerScreen } from '../screens/player-screen.js';
 import { createDmScreen } from '../screens/dm-screen.js';
+import { createFogController } from '../fog/fogController.js';
 
 export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const e = escapeHtml;
@@ -30,10 +31,26 @@ export function startEntry(client, bootBoard) {
   // entered/left — never active for any route other than the DM's own online session board.
   let realtimeEngine = null, realtimeLifecycle = null, realtimeBoardView = null, realtimeSessionId = null, unwireRealtimeActions = null;
   let renderTarget = null, playerScreen = null;
+  // Issue #10F: the DM Fog Mode controller. Lazily created once, alongside realtimeEngine, so it
+  // reuses the one existing session engine — never a second engine/adapter/subscription. Only
+  // ever activated for the DM's own `board/<sessionId>` route (never for `#play/<sessionId>`).
+  let fogController = null;
   function ensurePlayerScreen() { return playerScreen ??= mountPlayerScreen(root); }
   function renderCurrent(view) {
     if (renderTarget === 'player') ensurePlayerScreen().render(view);
-    else if (renderTarget === 'dm') dmScreen.render(view);
+    else if (renderTarget === 'dm') { dmScreen.render(view); fogController?.render(view); }
+  }
+  function reportMutationResult(result) {
+    let message = document.getElementById('realtimeMutationNotice');
+    if (!message) {
+      message = document.createElement('p');
+      message.id = 'realtimeMutationNotice';
+      message.setAttribute('role', 'status');
+      board.appendChild(message);
+    }
+    message.textContent = result.ok ? '' : result.conflict
+      ? 'The session changed. Review the current state and try again.'
+      : 'The change could not be saved. Check your access or connection and try again.';
   }
   function ensureRealtimeLifecycle() {
     if (!realtimeLifecycle) {
@@ -50,20 +67,34 @@ export function startEntry(client, bootBoard) {
           }
         },
       });
-      unwireRealtimeActions = wireRealtimeBoardActions(realtimeEngine, () => realtimeSessionId, () => realtimeBoardView, document, result => {
-        let message = document.getElementById('realtimeMutationNotice');
-        if (!message) {
-          message = document.createElement('p');
-          message.id = 'realtimeMutationNotice';
-          message.setAttribute('role', 'status');
-          board.appendChild(message);
-        }
-        message.textContent = result.ok ? '' : result.conflict
-          ? 'The session changed. Review the current state and try again.'
-          : 'The change could not be saved. Check your access or connection and try again.';
-      });
+      unwireRealtimeActions = wireRealtimeBoardActions(realtimeEngine, () => realtimeSessionId, () => realtimeBoardView, document, reportMutationResult);
     }
     return realtimeLifecycle;
+  }
+  /** Constructed only from the DM's own `board/<sessionId>` route (never for `#play/<sessionId>`),
+   * and only once realtimeEngine already exists — reusing that one singleton engine, never a
+   * second one. The legacy board's own static markup (index.html) always has `.grid-frame`/
+   * `#grid`/`#sidebarPanel`; guarded here only so an environment/fixture without the full legacy
+   * board never crashes the board route — fogController then simply stays null, and every call
+   * site is optional-chained. */
+  function ensureFogController() {
+    if (fogController || !realtimeEngine) return fogController;
+    const fogFrame = document.querySelector('.grid-frame');
+    const fogGrid = document.getElementById('grid');
+    const fogHost = document.getElementById('sidebarPanel');
+    if (fogFrame && fogGrid && fogHost) {
+      fogController = createFogController({
+        engine: realtimeEngine,
+        getSessionId: () => realtimeSessionId,
+        getView: () => realtimeBoardView,
+        frame: fogFrame,
+        grid: fogGrid,
+        host: fogHost,
+        confirmAction: ({ message }) => window.confirm(message),
+        onResult: reportMutationResult,
+      });
+    }
+    return fogController;
   }
   function stopRealtimeBoard() {
     realtimeLifecycle?.stop();
@@ -71,7 +102,7 @@ export function startEntry(client, bootBoard) {
     realtimeSessionId = null;
     realtimeBoardView = null;
     playerScreen?.dispose(); playerScreen = null;
-    dmScreen.deactivate(); renderTarget = null;
+    dmScreen.deactivate(); fogController?.deactivate(); renderTarget = null;
     document.getElementById('realtimeMutationNotice')?.remove();
   }
   function startRealtimeBoard(sessionId) {
@@ -84,7 +115,13 @@ export function startEntry(client, bootBoard) {
   back.type = 'button'; back.className = 'entry-board-back'; back.textContent = 'Return to session'; back.hidden = true;
   document.querySelector('.app-header').append(back);
   back.addEventListener('click', () => go(activeSession ? `session/${activeSession.id}` : 'dm'));
-  const dmScreen = createDmScreen({ apply: view => window.aureRelicsApplyRealtimeSnapshot?.(view), container: document.querySelector('.app-header') });
+  const dmScreen = createDmScreen({
+    apply: view => window.aureRelicsApplyRealtimeSnapshot?.(view),
+    container: document.querySelector('.app-header'),
+    // Purely local presentation notice (Issue #10F): switching to Player Preview suspends the DM
+    // fog editor/controls without touching authority or the network; returning to DM restores them.
+    onPresentationModeChange: mode => fogController?.setPresentationMode(mode),
+  });
 
   function notice(message, error = false) {
     const target = root.querySelector('#entryNotice');
@@ -174,6 +211,7 @@ export function startEntry(client, bootBoard) {
           if (stamp !== epoch) { concealBoard(); return; }
           dmScreen.activate(); renderTarget = 'dm';
           startRealtimeBoard(session.id);
+          ensureFogController()?.activate();
           window.dispatchEvent(new Event('resize'));
           return;
         }
@@ -330,5 +368,5 @@ export function startEntry(client, bootBoard) {
   window.addEventListener('pagehide', pageHidden);
   window.addEventListener('pageshow', pageShown);
   void load();
-  return () => { destroyed = true; ++epoch; clearCharacters(); stopRealtimeBoard(); unwireRealtimeActions?.(); clearTimeout(timer); subscription.unsubscribe(); window.removeEventListener('hashchange', hashChanged); window.removeEventListener('pagehide', pageHidden); window.removeEventListener('pageshow', pageShown); back.remove(); };
+  return () => { destroyed = true; ++epoch; clearCharacters(); stopRealtimeBoard(); fogController?.dispose(); unwireRealtimeActions?.(); clearTimeout(timer); subscription.unsubscribe(); window.removeEventListener('hashchange', hashChanged); window.removeEventListener('pagehide', pageHidden); window.removeEventListener('pageshow', pageShown); back.remove(); };
 }

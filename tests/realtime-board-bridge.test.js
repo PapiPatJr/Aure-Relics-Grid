@@ -88,6 +88,34 @@ test('a snapshot for a different session is always a fresh install, never compar
   assert.equal(next.revision, '1');
 });
 
+// --- Issue #10 Task 4: top-level fog carried through as view.fog, replacement semantics ---
+
+test('createBoardView carries snapshot.fog through as top-level view.fog', () => {
+  const fog = { levelId: 'level-1', width: 4, height: 4, enabled: true, revealedRuns: [] };
+  const view = createBoardView(baseSnapshot({ fog }));
+  assert.equal(view.fog, fog);
+});
+
+test('createBoardView defaults view.fog to null when the snapshot has no fog field', () => {
+  const view = createBoardView(baseSnapshot());
+  assert.equal(view.fog, null);
+});
+
+test('a newer snapshot replaces fog wholesale, including clearing it back to null', () => {
+  const fog = { levelId: 'level-1', width: 4, height: 4, enabled: true, revealedRuns: [[0, 0, 2]] };
+  const first = createBoardView(baseSnapshot({ revision: '1', fog }));
+  assert.equal(first.fog, fog);
+  const next = reconcileBoardView(first, baseSnapshot({ revision: '2', fog: null }));
+  assert.equal(next.fog, null);
+});
+
+test('a stale snapshot never regresses fog either', () => {
+  const fog = { levelId: 'level-1', width: 4, height: 4, enabled: true, revealedRuns: [] };
+  const first = createBoardView(baseSnapshot({ revision: '5', fog }));
+  const stale = reconcileBoardView(first, baseSnapshot({ revision: '2', fog: null }));
+  assert.equal(stale.fog, fog);
+});
+
 test('tokens are sorted deterministically (kind, then label, then id)', () => {
   const view = createBoardView(baseSnapshot({ tokens: [
     { id: 'b', kind: 'enemy', label: 'E2' },

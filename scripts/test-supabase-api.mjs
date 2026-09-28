@@ -44,7 +44,18 @@ try {
   const character = await insert(a.client,'characters',{campaign_id:c.id,name:'Player',approved:true,hp:20});
   await insert(a.client,'campaign_members',{campaign_id:c.id,user_id:guestId,status:'approved'});
   await insert(a.client,'session_players',{campaign_id:c.id,session_id:session.id,user_id:guestId,status:'approved'});
-  await insert(a.client,'fog_cells',{campaign_id:c.id,level_id:level.id,x:0,y:0,is_revealed:true});
+  ok(Boolean((await a.client.from('fog_cells').select('level_id')).error),'DM cannot read canonical fog cells directly through REST');
+  ok(Boolean((await a.client.from('fog_cells').insert({campaign_id:c.id,level_id:level.id,x:0,y:0,is_revealed:true})).error),'DM cannot insert canonical fog cells directly through REST');
+  const fogSnapshot = data(await a.client.rpc('get_session_snapshot',{p_session:session.id}));
+  data(await a.client.rpc('mutate_session',{
+    p_session:session.id,
+    p_command:{
+      schemaVersion:1,
+      type:'fog.paint',
+      expectedRevision:fogSnapshot.revision,
+      payload:{levelId:level.id,mode:'reveal',cells:[[0,0]]}
+    }
+  }));
   const enemy = await insert(a.client,'tokens',{campaign_id:c.id,level_id:level.id,kind:'enemy',label:'Public enemy',x:0,y:0,is_visible:true,condition_label:'Hurt'});
   await insert(a.client,'tokens',{campaign_id:c.id,level_id:level.id,kind:'boss',label:'Hidden boss',x:1,y:0,is_visible:false});
   await insert(a.client,'tokens',{campaign_id:c.id,level_id:level.id,kind:'npc',label:'Fogged NPC',x:1,y:0,is_visible:true});

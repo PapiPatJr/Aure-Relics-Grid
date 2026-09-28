@@ -17,6 +17,13 @@
  * with the exact same predicates the backend already uses to build a real player's own array.
  * This function never recomputes or approximates that predicate client-side — it only ever reads
  * the flag the backend already attached.
+ *
+ * Issue #10's `fog` field lives at the top level of a BoardView (see boardBridge.js), not under
+ * `dm`, precisely because it is part of every authorized recipient's own projection, player and
+ * manager alike (design §8; manager-only fog *management* metadata is nested separately under
+ * `dm.fog` and is therefore already stripped by nulling `dm` below). Every branch here returns
+ * either `view` itself or an object built by spreading `view`, so `fog` always survives derivation
+ * unchanged — this function has no code path that reads, filters, or reconstructs it.
  */
 
 /**

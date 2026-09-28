@@ -3,6 +3,7 @@ import { getSupabaseClient } from './supabase/client.js';
 import { startEntry } from './entry/app.js';
 import './entry/entry.css';
 import './characters/characters.css';
+import './fog/fog.css';
 
 async function start() {
   try {

@@ -37,6 +37,13 @@
 
 import { buildPlayerFogStage } from '../fog/fogRenderer.js';
 
+// Corrective pass (crowded realtime combatants): remembers the last active tokenId this
+// specific container scrolled to, so a re-render triggered by an unrelated mutation (an HP
+// tick, a fog edit) never re-triggers a smooth scroll — only an actual initiative change does.
+// Keyed by container (not module-global) because the real Player Screen panel and the DM's
+// read-only preview panel are two independent containers that can both be mounted at once.
+const lastActiveTokenIdByContainer = new WeakMap();
+
 function createActionButton(doc, action, label, dataset = {}) {
   const button = doc.createElement('button');
   button.type = 'button';
@@ -47,9 +54,33 @@ function createActionButton(doc, action, label, dataset = {}) {
   return button;
 }
 
-function renderTokenRow(doc, token, canManageHere) {
+function createRailCountHeader(doc, label, count) {
+  const header = doc.createElement('div');
+  header.className = 'realtime-rail-count';
+  header.textContent = `${label} · ${count}`;
+  return header;
+}
+
+// Corrective pass: the server orders `tokens` by id (an unordered UUID), so bosses are not
+// naturally first. Mirrors script.js's own TOKEN_TYPES.priority for the legacy board — same
+// product ordering (bosses, then enemies, then NPCs), applied here purely for display.
+const KIND_PRIORITY = { boss: 0, enemy: 1, npc: 2, player: 3 };
+
+function sortTokensForDisplay(tokens) {
+  return [...tokens].sort((a, b) => {
+    const priorityDiff = (KIND_PRIORITY[a.kind] ?? 9) - (KIND_PRIORITY[b.kind] ?? 9);
+    if (priorityDiff !== 0) return priorityDiff;
+    // Numeric-suffix compare, not string compare — "E2" must sort before "E10".
+    const aNumber = Number((a.label ?? '').match(/\d+$/)?.[0] ?? 0);
+    const bNumber = Number((b.label ?? '').match(/\d+$/)?.[0] ?? 0);
+    return aNumber !== bNumber ? aNumber - bNumber : (a.label ?? '').localeCompare(b.label ?? '');
+  });
+}
+
+function renderTokenRow(doc, token, canManageHere, isActive) {
   const row = doc.createElement('li');
   row.className = 'realtime-token-row';
+  row.classList.toggle('active-combatant', isActive);
   row.dataset.tokenId = token.id;
 
   const label = doc.createElement('span');
@@ -146,6 +177,9 @@ export function renderBoardView(container, displayView, options) {
 
   const { roundNumber, tokens, characters, initiative, authority, dm, fog } = displayView;
   const canManageHere = !readOnly && presentationMode === 'dm' && Boolean(authority?.canManage);
+  // Only ever a tokenId — characters have no initiative entry of their own in this data model
+  // (see boardBridge.js), so active-turn auto-scroll only ever applies to the token list.
+  const activeTokenId = (initiative || []).find(entry => entry.isActive)?.tokenId;
 
   const heading = doc.createElement('h3');
   heading.textContent = `Online session — Round ${roundNumber ?? '—'}`;
@@ -160,10 +194,20 @@ export function renderBoardView(container, displayView, options) {
     container.appendChild(createActionButton(doc, 'advance-round', 'Advance round'));
   }
 
+  if ((tokens || []).length > 0) {
+    container.appendChild(createRailCountHeader(doc, 'Opponents', tokens.length));
+  }
+
   const tokenList = doc.createElement('ul');
   tokenList.className = 'realtime-token-list';
-  (tokens || []).forEach(token => tokenList.appendChild(renderTokenRow(doc, token, canManageHere)));
+  sortTokensForDisplay(tokens || []).forEach(token => tokenList.appendChild(
+    renderTokenRow(doc, token, canManageHere, token.id === activeTokenId)
+  ));
   container.appendChild(tokenList);
+
+  if ((characters || []).length > 0) {
+    container.appendChild(createRailCountHeader(doc, 'Players', characters.length));
+  }
 
   const characterList = doc.createElement('ul');
   characterList.className = 'realtime-character-list';
@@ -190,4 +234,17 @@ export function renderBoardView(container, displayView, options) {
 
     container.appendChild(dmSection);
   }
+
+  // Only scroll when the active combatant actually changed since this container's last render
+  // (never on every re-render — an HP tick or fog edit must not smooth-scroll the screen).
+  // Looking the row up on `container` (this render's own freshly-built DOM) rather than acting
+  // on `activeTokenId` directly means a hidden/unauthorized token can never be scrolled to: if
+  // deriveDisplayView filtered it out, tokenList never contains a matching row and this is a
+  // no-op, so becoming active never reveals it.
+  if (activeTokenId !== undefined && activeTokenId !== lastActiveTokenIdByContainer.get(container)) {
+    Array.from(tokenList.children)
+      .find(row => row.dataset.tokenId === activeTokenId)
+      ?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }
+  lastActiveTokenIdByContainer.set(container, activeTokenId);
 }

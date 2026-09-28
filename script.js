@@ -2648,7 +2648,7 @@ function getRealtimeSessionPanel() {
     realtimeSessionPanel.className = "realtime-session-panel";
     realtimeSessionPanel.setAttribute("aria-label", "Online session (read-only)");
     realtimeSessionPanel.hidden = true;
-    document.body.appendChild(realtimeSessionPanel);
+    elements.rightPanel.appendChild(realtimeSessionPanel);
   }
 
   return realtimeSessionPanel;
@@ -2670,9 +2670,39 @@ function createRealtimeActionButton(action, label, dataset = {}) {
   return button;
 }
 
-function renderRealtimeTokenRow(token, authority) {
+function createRealtimeRailCountHeader(label, count) {
+  const header = document.createElement("div");
+  header.className = "realtime-rail-count";
+  header.textContent = `${label} · ${count}`;
+  return header;
+}
+
+// Corrective pass: the server orders `tokens` by id (an unordered UUID), so bosses are not
+// naturally first. Mirrors TOKEN_TYPES.priority above (the legacy board's own ordering) — same
+// product ordering (bosses, then enemies, then NPCs), applied here purely for display.
+const REALTIME_KIND_PRIORITY = { boss: 0, enemy: 1, npc: 2, player: 3 };
+
+function sortRealtimeTokensForDisplay(tokens) {
+  return [...tokens].sort((a, b) => {
+    const priorityDiff = (REALTIME_KIND_PRIORITY[a.kind] ?? 9) - (REALTIME_KIND_PRIORITY[b.kind] ?? 9);
+    if (priorityDiff !== 0) return priorityDiff;
+    // Numeric-suffix compare, not string compare — "E2" must sort before "E10".
+    const aNumber = Number((a.label ?? "").match(/\d+$/)?.[0] ?? 0);
+    const bNumber = Number((b.label ?? "").match(/\d+$/)?.[0] ?? 0);
+    return aNumber !== bNumber ? aNumber - bNumber : (a.label ?? "").localeCompare(b.label ?? "");
+  });
+}
+
+// Corrective pass (crowded realtime combatants): only one DM realtime panel ever exists
+// (getRealtimeSessionPanel() is a singleton), so a single module-level watermark is enough —
+// mirrors the WeakMap-per-container version in src/board/boardViewRenderer.js, which needs one
+// because that module can have two independent panels (Player Screen + DM preview) mounted at once.
+let lastActiveRealtimeTokenId;
+
+function renderRealtimeTokenRow(token, authority, isActive) {
   const row = document.createElement("li");
   row.className = "realtime-token-row";
+  row.classList.toggle("active-combatant", isActive);
   row.dataset.tokenId = token.id;
 
   const label = document.createElement("span");
@@ -2771,10 +2801,22 @@ function applyRealtimeSnapshot(view) {
     panel.appendChild(createRealtimeActionButton("advance-round", "Advance round"));
   }
 
+  const activeTokenId = (view.initiative || []).find(entry => entry.isActive)?.tokenId;
+
+  if ((view.tokens || []).length > 0) {
+    panel.appendChild(createRealtimeRailCountHeader("Opponents", view.tokens.length));
+  }
+
   const tokenList = document.createElement("ul");
   tokenList.className = "realtime-token-list";
-  (view.tokens || []).forEach(token => tokenList.appendChild(renderRealtimeTokenRow(token, view.authority)));
+  sortRealtimeTokensForDisplay(view.tokens || []).forEach(token => tokenList.appendChild(
+    renderRealtimeTokenRow(token, view.authority, token.id === activeTokenId)
+  ));
   panel.appendChild(tokenList);
+
+  if ((view.characters || []).length > 0) {
+    panel.appendChild(createRealtimeRailCountHeader("Players", view.characters.length));
+  }
 
   const characterList = document.createElement("ul");
   characterList.className = "realtime-character-list";
@@ -2801,6 +2843,15 @@ function applyRealtimeSnapshot(view) {
 
     panel.appendChild(dmSection);
   }
+
+  // Only scroll when the active combatant actually changed since the last render (never on
+  // every re-render — an HP tick or fog edit must not smooth-scroll the DM's screen).
+  if (activeTokenId !== undefined && activeTokenId !== lastActiveRealtimeTokenId) {
+    Array.from(tokenList.children)
+      .find(row => row.dataset.tokenId === activeTokenId)
+      ?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }
+  lastActiveRealtimeTokenId = activeTokenId;
 }
 
 window.aureRelicsApplyRealtimeSnapshot = applyRealtimeSnapshot;

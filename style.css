@@ -1870,8 +1870,39 @@ body.dm-workspace-open .dm-workspace {
   padding: 16px;
 }
 
+/* Corrective pass (crowded realtime combatants): this panel used to be appended straight to
+   document.body, additive alongside the DM's own full-height legacy board — with no size or
+   position of its own, and body deliberately non-scrolling for the legacy board's own layout, a
+   crowded session's content there was simply unreachable. It now mounts inside the existing
+   combat tracker sidebar (#rightPanel) instead, which already owns its own independent vertical
+   scroll (.right-panel{overflow-y:auto}, above) — the exact "list/rail owns its own overflow"
+   principle this whole corrective pass is about, already present and already safe, so this needed
+   no new floating overlay, no new position:fixed stacking to reason about, and no risk of ever
+   covering the hud-rails or any other legacy control. */
 .player-board-panel {
   margin: 16px;
+}
+
+/* Corrective pass: #playerBoardPanel is the Player Screen's primary (only) content, mounted in
+   normal document flow near the top of the page — unlike #realtimeSessionPanel above, its top
+   edge is already on-screen, so bounding its own height and letting it scroll internally (rather
+   than relying on body, which stays non-scrolling here too) is enough. */
+#playerBoardPanel {
+  max-height: calc(100dvh - var(--header-height) - 32px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--grid-frame) transparent;
+}
+
+.realtime-rail-count {
+  margin: 10px 0 4px;
+  color: var(--gold-bright);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
 }
 
 .realtime-token-list,
@@ -1883,6 +1914,14 @@ body.dm-workspace-open .dm-workspace {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* Corrective pass: each collection now owns its own bounded, independently scrollable region
+     instead of growing without limit — the "Players"/"Opponents" rail equivalent for the
+     realtime screens, mirroring the legacy board's .hud-rail fix. */
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--grid-frame) transparent;
 }
 
 .realtime-token-row {
@@ -1892,6 +1931,11 @@ body.dm-workspace-open .dm-workspace {
   padding: 4px 8px;
   background: var(--panel-soft);
   border-radius: 4px;
+}
+
+.realtime-token-row.active-combatant {
+  border-left: 3px solid var(--gold-bright);
+  background: rgba(245, 217, 139, 0.12);
 }
 
 .realtime-token-label {

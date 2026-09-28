@@ -1,5 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import { createClient } from '@supabase/supabase-js';
 import { expect } from './fixtures.js';
+import { localStack, apiOrigin } from './local-stack.mjs';
 
 function rosterRow(dm, name) {
   return dm.page.locator('#roster .entry-row').filter({
@@ -276,6 +278,93 @@ export async function countSessionEvents(sessionId) {
 export async function insertHiddenToken(room, level, { x = 0, y = 0, label = 'Hidden Lurker' } = {}) {
   const [token] = runSql(`insert into public.tokens(campaign_id,level_id,kind,label,x,y,width,height,is_visible) values(${sqlLiteral(room.hosted.campaign)},${sqlLiteral(level.levelId)},'enemy',${sqlLiteral(label)},${x},${y},1,1,false) returning id;`);
   return token;
+}
+
+/** Mark exactly one token's initiative entry active (clearing any previous one first, mirroring
+ * the single-active-entry invariant `mutate_session`'s own `initiative.set` command enforces —
+ * raw SQL bypasses that check, so this helper keeps it true by hand). Same "no production path"
+ * rationale as insertTokens(): `initiative.set` can only update entries for tokens that already
+ * exist, never create the crowded fixture's 30 rows from scratch, and this helper's job is purely
+ * to prove the auto-scroll-to-active behavior, not to re-test `initiative.set` itself. */
+export async function setActiveInitiative(room, tokenId) {
+  runSql(`update public.initiative_entries set is_active=false where session_id=${sqlLiteral(room.hosted.session)} returning id;`);
+  const [entry] = runSql(`insert into public.initiative_entries(campaign_id,session_id,token_id,initiative,position,is_active) values(${sqlLiteral(room.hosted.campaign)},${sqlLiteral(room.hosted.session)},${sqlLiteral(tokenId)},1,0,true) returning id;`);
+  return entry;
+}
+
+/** Bulk-insert many bosses/enemies/NPCs directly, for the same reason insertHiddenToken() does
+ * (no production path creates `public.tokens` rows yet) — this is the crowded-realtime-combatants
+ * regression's opponent roster, which needs 30 rows and would be impractical to seed one RPC call
+ * at a time even if one existed. Each entry is `{ kind, label, x, y, isVisible }` (isVisible
+ * defaults to true, since this fixture's whole point is an *authorized* player-visible crowd).
+ * Returns the inserted `{ id, label }` rows in the same order as `tokens`. */
+export async function insertTokens(room, level, tokens) {
+  const values = tokens.map(t => `(${sqlLiteral(room.hosted.campaign)},${sqlLiteral(level.levelId)},${sqlLiteral(t.kind)},${sqlLiteral(t.label)},${t.x},${t.y},${t.isVisible === false ? 'false' : 'true'})`).join(',');
+  return runSql(`insert into public.tokens(campaign_id,level_id,kind,label,x,y,is_visible) values ${values} returning id,label;`);
+}
+
+/** Turn off campaign-wide fog directly. A real "Disable Fog" control exists (fog.spec.js already
+ * covers that UI path end to end); this raw update exists only so the crowded-realtime-combatants
+ * fixture's 30 SQL-seeded tokens (which have no DM-authored fog-reveal history of their own) are
+ * `publicVisible` without also having to seed 400 `fog_cells` reveal rows per level. Never used by
+ * any test that is itself testing fog behavior. */
+export async function disableCampaignFog(room) {
+  runSql(`update public.campaigns set fog_enabled=false where id=${sqlLiteral(room.hosted.campaign)} returning id;`);
+}
+
+/** Create `count` approved player characters through the real request_session_join /
+ * review_session_guest / create_session_character / review_character RPCs — never a raw table
+ * insert, since (unlike tokens/levels) a real production path already creates characters and this
+ * is fixture setup for a layout/scrolling regression, not a re-test of that join/approval flow
+ * (already covered by entry.spec.js/realtime.spec.js). Uses lightweight anonymous Node-side
+ * clients rather than 8 full browser contexts, since nothing here needs a rendered page. Returns
+ * the created character ids and a `cleanup()` that deletes the throwaway anonymous auth.users —
+ * these never pass through a tracked page's own /auth/v1/signup response, so fixtures.js's own
+ * teardown (which only deletes users it saw that way) never touches them. */
+export async function createApprovedCharacters(actors, room, count, namePrefix = 'Fixture Player') {
+  const stack = localStack();
+  const authOptions = { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } };
+  const secret = room.hosted.code.split('.')[2];
+  const userIds = [];
+  const characterIds = [];
+
+  for (let i = 0; i < count; i += 1) {
+    const client = createClient(apiOrigin, stack.ANON_KEY, authOptions);
+    const { data: signIn, error: signInError } = await client.auth.signInAnonymously();
+    if (signInError) throw signInError;
+    userIds.push(signIn.user.id);
+
+    const displayName = `${namePrefix} ${i + 1}`;
+    const joined = await client.rpc('request_session_join', {
+      p_campaign: room.hosted.campaign, p_session: room.hosted.session, p_code: secret, p_display_name: displayName,
+    });
+    if (joined.error) throw joined.error;
+
+    const approvedGuest = await actors.rpc(room.dm, 'review_session_guest', {
+      p_session: room.hosted.session, p_user: signIn.user.id, p_action: 'approve',
+    });
+    if (approvedGuest.error) throw new Error(JSON.stringify(approvedGuest.error));
+
+    const created = await client.rpc('create_session_character', {
+      p_session: room.hosted.session, p_name: displayName, p_player_name: displayName,
+      p_hp: 10, p_max_hp: 10, p_temp_hp: 0, p_ac: 10, p_speed: 30, p_statuses: [], p_notes: '',
+    });
+    if (created.error) throw created.error;
+    characterIds.push(created.data);
+
+    const approvedCharacter = await actors.rpc(room.dm, 'review_character', {
+      p_character: created.data, p_approved: true,
+    });
+    if (approvedCharacter.error) throw new Error(JSON.stringify(approvedCharacter.error));
+  }
+
+  return {
+    characterIds,
+    async cleanup() {
+      const admin = createClient(apiOrigin, stack.SERVICE_ROLE_KEY, authOptions);
+      for (const id of userIds) await admin.auth.admin.deleteUser(id).catch(() => {});
+    },
+  };
 }
 
 /** Read `#grid`'s live layout box and translate an authoritative fog cell into a client-space

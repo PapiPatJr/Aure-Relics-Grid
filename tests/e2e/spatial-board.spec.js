@@ -87,7 +87,17 @@ test.describe('realtime spatial token board', () => {
     await expect(spatialToken(layer, visible.id)).toBeVisible();
     await expect(spatialToken(layer, visible.id)).toHaveAttribute('data-token-x', '6');
     await expect(spatialToken(layer, visible.id)).toHaveAttribute('data-token-y', '8');
+
+    // The hidden token must be absent by every angle a leak could take: no element at all (not
+    // merely hidden/disabled), its id and label appear nowhere in the layer's markup, and no
+    // stray placeholder node inflates the layer beyond the one token this Player is authorized
+    // to see (data-token-x/y absent falls out of "no element exists" — there is nothing to hold
+    // that attribute).
     await expect(spatialToken(layer, hidden.id)).toHaveCount(0);
+    await expect(layer).not.toContainText('Lurker');
+    const layerHtml = await layer.innerHTML();
+    expect(layerHtml).not.toContain(hidden.id);
+    await expect(layer.locator('.spatial-token')).toHaveCount(1);
   });
 
   test('Player: the spatial token layer carries no mutation/manage controls', async ({ actors }) => {
@@ -106,16 +116,22 @@ test.describe('realtime spatial token board', () => {
       { kind: 'enemy', label: 'E1', x: 2, y: 2 },
       { kind: 'boss', label: 'B1', x: 9, y: 9 },
     ]);
-    await insertHiddenToken(room, level, { x: 0, y: 0, label: 'Lurker' });
+    const hidden = await insertHiddenToken(room, level, { x: 0, y: 0, label: 'Lurker' });
 
     await openPlayerScreen(room.playerA, room.hosted.session);
     const playerLayer = room.playerA.page.locator('#playerBoardPanel .fog-player-stage .spatial-token-layer');
     await expect(playerLayer.locator('.spatial-token')).toHaveCount(2);
+    await expect(spatialToken(playerLayer, hidden.id)).toHaveCount(0);
 
     await room.dm.page.goto(`/#board/${room.hosted.session}`);
     await togglePresentationMode(room.dm);
     const previewLayer = room.dm.page.locator('#dmPreviewPanel .fog-player-stage .spatial-token-layer');
     await expect(previewLayer.locator('.spatial-token')).toHaveCount(2);
+    // The hidden token stays absent from the Preview specifically, not merely uncounted — the DM
+    // is looking at the same recipient-shaped projection a real player gets, never its own
+    // manager-shaped view with hidden tokens filtered out only by CSS/visual treatment.
+    await expect(spatialToken(previewLayer, hidden.id)).toHaveCount(0);
+    await expect(previewLayer).not.toContainText('Lurker');
 
     const [playerPositions, previewPositions] = await Promise.all([
       playerLayer.locator('.spatial-token').evaluateAll(els => els.map(el => ({ x: el.dataset.tokenX, y: el.dataset.tokenY })).sort((a, b) => a.x - b.x)),
@@ -129,18 +145,42 @@ test.describe('realtime spatial token board', () => {
     const [token] = await insertTokens(room, level, [{ kind: 'enemy', label: 'Mover', x: 1, y: 1 }]);
 
     await openPlayerScreen(room.playerA, room.hosted.session);
-    const playerToken = spatialToken(room.playerA.page.locator('#playerBoardPanel'), token.id);
+    const playerPanel = room.playerA.page.locator('#playerBoardPanel');
+    const playerToken = spatialToken(playerPanel, token.id);
     await expect(playerToken).toHaveAttribute('data-token-x', '1');
 
     await room.dm.page.goto(`/#board/${room.hosted.session}`);
-    const dmToken = spatialToken(room.dm.page.locator('#realtimeSessionPanel'), token.id);
+    const dmPanel = room.dm.page.locator('#realtimeSessionPanel');
+    const dmToken = spatialToken(dmPanel, token.id);
     await expect(dmToken).toHaveAttribute('data-token-x', '1');
+
+    // The DM board (#realtimeSessionPanel) and Preview (#dmPreviewPanel) are mutually exclusive
+    // views of the same DM page (toggling hides one and shows the other — dm-screen.js), so
+    // Preview is checked here, then toggled back to the DM board before the move, rather than
+    // asserting both panels' DOM at once.
+    await togglePresentationMode(room.dm);
+    const previewPanel = room.dm.page.locator('#dmPreviewPanel');
+    const previewToken = spatialToken(previewPanel, token.id);
+    await expect(previewToken).toHaveAttribute('data-token-x', '1');
+    await togglePresentationMode(room.dm);
 
     await moveTokenDirect(room, token.id, 15, 12);
 
     await expect(playerToken).toHaveAttribute('data-token-x', '15', { timeout: 20_000 });
     await expect(playerToken).toHaveAttribute('data-token-y', '12', { timeout: 20_000 });
+    await expect(spatialToken(playerPanel, token.id)).toHaveCount(1);
+
     await expect(dmToken).toHaveAttribute('data-token-x', '15', { timeout: 20_000 });
     await expect(dmToken).toHaveAttribute('data-token-y', '12', { timeout: 20_000 });
+    await expect(spatialToken(dmPanel, token.id)).toHaveCount(1);
+
+    // Re-enter Preview after the move: dm-screen.js's lastView is already the moved snapshot (it
+    // updates on every render() regardless of which mode is currently displayed), so this proves
+    // Preview picks up the authoritative move too, not just a stale position from before it was
+    // last shown — and that no ghost/duplicate token survives its own rerender either.
+    await togglePresentationMode(room.dm);
+    await expect(previewToken).toHaveAttribute('data-token-x', '15', { timeout: 20_000 });
+    await expect(previewToken).toHaveAttribute('data-token-y', '12', { timeout: 20_000 });
+    await expect(spatialToken(previewPanel, token.id)).toHaveCount(1);
   });
 });

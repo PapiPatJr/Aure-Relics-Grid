@@ -37,6 +37,55 @@ test('each bridge function sends the exact type/payload; the engine attaches sch
   ]);
 });
 
+test('each Tuesday Online gameplay bridge function sends the exact type/payload; the engine attaches schemaVersion/expectedRevision', async () => {
+  const { engine, adapter } = await buildReadyEngine('9');
+  adapter.setMutateResult(async (id, command) => ({ command }));
+  const bridge = createMutationBridge(engine);
+
+  await bridge.prepareBoard(session);
+  await bridge.createToken(session, { kind: 'enemy', characterId: null, label: 'Goblin', x: 3, y: 4, isVisible: false });
+  await bridge.moveToken(session, { tokenId: 't1', x: 5, y: 6 });
+  await bridge.deleteToken(session, { tokenId: 't1' });
+  await bridge.advanceInitiative(session);
+
+  const sent = adapter.calls.mutate.map(c => c.command);
+  assert.deepEqual(sent, [
+    { schemaVersion: 1, type: 'session.prepareBoard', expectedRevision: '9', payload: {} },
+    { schemaVersion: 1, type: 'token.create', expectedRevision: '9', payload: { kind: 'enemy', characterId: null, label: 'Goblin', x: 3, y: 4, isVisible: false } },
+    { schemaVersion: 1, type: 'token.move', expectedRevision: '9', payload: { tokenId: 't1', x: 5, y: 6 } },
+    { schemaVersion: 1, type: 'token.delete', expectedRevision: '9', payload: { tokenId: 't1' } },
+    { schemaVersion: 1, type: 'initiative.advance', expectedRevision: '9', payload: {} },
+  ]);
+});
+
+test('a player-shaped backend rejection (42501) is propagated unchanged for token.move and initiative.advance', async () => {
+  const { engine, adapter } = await buildReadyEngine('1');
+  const denied = Object.assign(new Error('not authorized'), { code: '42501' });
+  adapter.setMutateResult(async () => { throw denied; });
+  const bridge = createMutationBridge(engine);
+  await assert.rejects(() => bridge.moveToken(session, { tokenId: 't1', x: 1, y: 1 }), err => err === denied);
+  await assert.rejects(() => bridge.advanceInitiative(session), err => err === denied);
+});
+
+test('a 40001 conflict re-hydrates exactly once and never replays token.move or initiative.advance', async () => {
+  const { engine, adapter } = await buildReadyEngine('1');
+  const conflict = Object.assign(new Error('stale revision'), { code: '40001' });
+  adapter.setMutateResult(async () => { throw conflict; });
+  const bridge = createMutationBridge(engine);
+
+  const hydrateCallsBefore1 = adapter.calls.hydrate.length;
+  const moveOutcome = await mutateWithConflictRecovery(engine, session, () => bridge.moveToken(session, { tokenId: 't1', x: 1, y: 1 }));
+  assert.deepEqual(moveOutcome, { ok: false, conflict: true, error: conflict });
+  assert.equal(adapter.calls.mutate.length, 1);
+  assert.equal(adapter.calls.hydrate.length, hydrateCallsBefore1 + 1);
+
+  const hydrateCallsBefore2 = adapter.calls.hydrate.length;
+  const advanceOutcome = await mutateWithConflictRecovery(engine, session, () => bridge.advanceInitiative(session));
+  assert.deepEqual(advanceOutcome, { ok: false, conflict: true, error: conflict });
+  assert.equal(adapter.calls.mutate.length, 2);
+  assert.equal(adapter.calls.hydrate.length, hydrateCallsBefore2 + 1);
+});
+
 test('a player-shaped backend rejection (42501) is propagated unchanged — the bridge cannot and does not suppress it', async () => {
   const { engine, adapter } = await buildReadyEngine('1');
   const denied = Object.assign(new Error('not authorized'), { code: '42501' });

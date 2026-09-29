@@ -1,10 +1,14 @@
 import { isRevisionConflict } from './engine.js';
 
 /**
- * Thin, fully-typed wrappers over engine.mutate(sessionId, command) — one per currently
- * 8A-supported command. Only assembles the command shape; backend validation/bounds/authorization
- * stay exclusively server-side (see docs/issue-08a-realtime-contract.md's Mutation model). No
- * movement/fog/terrain command, and no generic/arbitrary mutation function, is introduced.
+ * Thin, fully-typed wrappers over engine.mutate(sessionId, command) — one per backend-authoritative
+ * gameplay command (the original 8A set, plus the Tuesday Online Playability Package 1 commands:
+ * prepareBoard/createToken/moveToken/deleteToken/advanceInitiative). Only assembles the command
+ * shape; backend validation/bounds/authorization stay exclusively server-side (see
+ * docs/issue-08a-realtime-contract.md's Mutation model and
+ * supabase/migrations/20260928233027_tuesday_online_gameplay_commands.sql). No terrain command
+ * and no generic/arbitrary mutation function is introduced. Fog commands live in their own
+ * bridge (src/fog/fogMutations.js), not here.
  *
  * `expectedRevision` is never a parameter here — engine.mutate() already attaches it from the
  * engine's own applied-snapshot watermark, so a caller of this bridge cannot supply a stale or
@@ -25,6 +29,21 @@ export function createMutationBridge(engine) {
 
     updateCharacter: (sessionId, character) =>
       engine.mutate(sessionId, { type: 'character.update', payload: character }),
+
+    prepareBoard: sessionId =>
+      engine.mutate(sessionId, { type: 'session.prepareBoard', payload: {} }),
+
+    createToken: (sessionId, { kind, characterId, label, x, y, isVisible }) =>
+      engine.mutate(sessionId, { type: 'token.create', payload: { kind, characterId, label, x, y, isVisible } }),
+
+    moveToken: (sessionId, { tokenId, x, y }) =>
+      engine.mutate(sessionId, { type: 'token.move', payload: { tokenId, x, y } }),
+
+    deleteToken: (sessionId, { tokenId }) =>
+      engine.mutate(sessionId, { type: 'token.delete', payload: { tokenId } }),
+
+    advanceInitiative: sessionId =>
+      engine.mutate(sessionId, { type: 'initiative.advance', payload: {} }),
   };
 }
 

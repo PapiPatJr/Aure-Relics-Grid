@@ -68,6 +68,61 @@ try {
   ok(data(await a.client.rpc('get_token_details',{token:enemy.id}))[0].actual_hp===77,'owner RPC reads exact HP');
   ok(Boolean((await guest.schema('private').from('dm_notes').select('*')).error),'private schema is not exposed to REST');
   ok(data(await guest.from('tokens').update({is_visible:true}).eq('id',enemy.id).select()).length===0,'guest cannot update official state through REST');
+
+  const blankSession = await insert(a.client,'sessions',{campaign_id:c.id,name:'Prepared by command',status:'lobby'});
+  let commandView = data(await a.client.rpc('get_session_snapshot',{p_session:blankSession.id}));
+  commandView = data(await a.client.rpc('mutate_session',{
+    p_session:blankSession.id,
+    p_command:{schemaVersion:1,type:'session.prepareBoard',expectedRevision:commandView.revision,payload:{}}
+  }));
+  ok(commandView.session.status==='active' && Boolean(commandView.session.activeLevelId),'prepareBoard creates and activates a playable board through the API');
+  const preparedLevel = data(await a.client.from('levels').select('grid_width,grid_height,theme').eq('id',commandView.session.activeLevelId).single());
+  ok(preparedLevel.grid_width===20 && preparedLevel.grid_height===20 && preparedLevel.theme==='relic','prepareBoard persists the fixed default level contract');
+
+  commandView = data(await a.client.rpc('get_session_snapshot',{p_session:session.id}));
+  commandView = data(await a.client.rpc('mutate_session',{
+    p_session:session.id,
+    p_command:{schemaVersion:1,type:'token.create',expectedRevision:commandView.revision,payload:{kind:'enemy',characterId:null,label:'API command token',x:0,y:0,isVisible:true}}
+  }));
+  const commandToken = commandView.tokens.find(token => token.label==='API command token');
+  ok(commandToken?.x===0 && commandToken?.y===0 && commandToken?.levelId===level.id,'token.create binds a positioned token to the active level through the API');
+  commandView = data(await a.client.rpc('mutate_session',{
+    p_session:session.id,
+    p_command:{schemaVersion:1,type:'token.create',expectedRevision:commandView.revision,payload:{kind:'boss',characterId:null,label:'API hidden command token',x:0,y:0,isVisible:false}}
+  }));
+  ok(!data(await guest.rpc('get_session_snapshot',{p_session:session.id})).tokens.some(token => token.label==='API hidden command token'),'hidden token creation is atomic in the player API projection');
+
+  commandView = data(await a.client.rpc('mutate_session',{
+    p_session:session.id,
+    p_command:{schemaVersion:1,type:'token.move',expectedRevision:commandView.revision,payload:{tokenId:commandToken.id,x:1,y:0}}
+  }));
+  ok(commandView.tokens.find(token => token.id===commandToken.id)?.x===1,'token.move persists the manager position through the API');
+  ok(!data(await guest.rpc('get_session_snapshot',{p_session:session.id})).tokens.some(token => token.id===commandToken.id),'moving into hidden fog removes the token from the player API projection');
+  const guestCommandView = data(await guest.rpc('get_session_snapshot',{p_session:session.id}));
+  const deniedMove = await guest.rpc('mutate_session',{
+    p_session:session.id,
+    p_command:{schemaVersion:1,type:'token.move',expectedRevision:guestCommandView.revision,payload:{tokenId:commandToken.id,x:0,y:0}}
+  });
+  ok(deniedMove.error?.code==='42501','player token.move is denied through the API');
+
+  commandView = data(await a.client.rpc('mutate_session',{
+    p_session:session.id,
+    p_command:{schemaVersion:1,type:'initiative.set',expectedRevision:commandView.revision,payload:{entries:[
+      {tokenId:commandToken.id,initiative:20,position:0,isActive:true},
+      {tokenId:enemy.id,initiative:10,position:1,isActive:false}
+    ]}}
+  }));
+  commandView = data(await a.client.rpc('mutate_session',{
+    p_session:session.id,
+    p_command:{schemaVersion:1,type:'initiative.advance',expectedRevision:commandView.revision,payload:{}}
+  }));
+  ok(commandView.initiative.find(entry => entry.tokenId===enemy.id)?.isActive===true,'initiative.advance updates the active combatant through the API');
+  commandView = data(await a.client.rpc('mutate_session',{
+    p_session:session.id,
+    p_command:{schemaVersion:1,type:'token.delete',expectedRevision:commandView.revision,payload:{tokenId:commandToken.id}}
+  }));
+  ok(!commandView.tokens.some(token => token.id===commandToken.id) && !commandView.initiative.some(entry => entry.tokenId===commandToken.id),'token.delete removes canonical token and initiative projection through the API');
+
   const code = data(await a.client.rpc('issue_character_code',{p_character:character.id}));
   data(await guest.rpc('revoke_character_code',{p_character:character.id}));
   // Invoker RLS makes an unauthorized revoke a no-op, proven by successful reclaim below.

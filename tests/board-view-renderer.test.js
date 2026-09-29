@@ -197,3 +197,94 @@ test('re-rendering with a new view fully replaces prior DOM, no stale nodes surv
   assert.equal(container.querySelector('[data-token-id="first-only"]'), null);
   assert.ok(container.querySelector('[data-token-id="second-only"]'));
 });
+
+// --- Final corrective pass: scroll position must survive an unrelated rerender of the same
+// logical view. container.innerHTML = '' throws away the old <ul>/<ol> elements (and their
+// scrollTop) on every render; this must be restored onto the new ones, not silently reset. ---
+
+function crowdedTokens(count, kind = 'enemy') {
+  return Array.from({ length: count }, (_, i) => ({ id: `t${i + 1}`, kind, label: `${kind}${i + 1}`, isVisible: true }));
+}
+
+test('same session/level, same active combatant: an unrelated rerender preserves manual scroll offset on all three lists', () => {
+  const { container } = makeContainer();
+  const view = playerShapedView({ tokens: crowdedTokens(30), initiative: [{ id: 'i1', tokenId: 't1', initiative: 15, position: 0, isActive: true }] });
+  renderBoardView(container, view, { presentationMode: 'player' });
+
+  container.querySelector('.realtime-token-list').scrollTop = 500;
+  container.querySelector('.realtime-character-list').scrollTop = 40;
+  container.querySelector('.realtime-initiative-list').scrollTop = 20;
+
+  // An unrelated mutation: same session, same level, same active token, just a changed HP value.
+  renderBoardView(container, { ...view, characters: [{ ...view.characters[0], hp: 8 }] }, { presentationMode: 'player' });
+
+  assert.equal(container.querySelector('.realtime-token-list').scrollTop, 500);
+  assert.equal(container.querySelector('.realtime-character-list').scrollTop, 40);
+  assert.equal(container.querySelector('.realtime-initiative-list').scrollTop, 20);
+});
+
+test('a different active level (same session) does not restore the old scroll offset', () => {
+  const { container } = makeContainer();
+  const view = playerShapedView({ session: { id: 'session-1', name: 'Session', status: 'active', activeLevelId: 'level-1' }, tokens: crowdedTokens(30) });
+  renderBoardView(container, view, { presentationMode: 'player' });
+  container.querySelector('.realtime-token-list').scrollTop = 500;
+
+  renderBoardView(container, { ...view, session: { ...view.session, activeLevelId: 'level-2' } }, { presentationMode: 'player' });
+
+  assert.equal(container.querySelector('.realtime-token-list').scrollTop, 0);
+});
+
+test('a different session does not restore the old scroll offset', () => {
+  const { container } = makeContainer();
+  const view = playerShapedView({ tokens: crowdedTokens(30) });
+  renderBoardView(container, view, { presentationMode: 'player' });
+  container.querySelector('.realtime-token-list').scrollTop = 500;
+
+  renderBoardView(container, { ...view, sessionId: 'session-2', session: { ...view.session, id: 'session-2' } }, { presentationMode: 'player' });
+
+  assert.equal(container.querySelector('.realtime-token-list').scrollTop, 0);
+});
+
+test('teardown (null view) then a fresh render of the same session/level never resurrects the old scroll offset', () => {
+  const { container } = makeContainer();
+  const view = playerShapedView({ tokens: crowdedTokens(30) });
+  renderBoardView(container, view, { presentationMode: 'player' });
+  container.querySelector('.realtime-token-list').scrollTop = 500;
+
+  renderBoardView(container, null, { presentationMode: 'player' });
+  renderBoardView(container, view, { presentationMode: 'player' });
+
+  assert.equal(container.querySelector('.realtime-token-list').scrollTop, 0);
+});
+
+test('two independent containers (Player Screen vs DM Preview) never share scroll or active state', () => {
+  const { container: playerContainer } = makeContainer();
+  const { container: previewContainer } = makeContainer();
+  const view = playerShapedView({ tokens: crowdedTokens(30) });
+
+  renderBoardView(playerContainer, view, { presentationMode: 'player' });
+  renderBoardView(previewContainer, view, { presentationMode: 'player', interactionMode: 'readOnly' });
+  playerContainer.querySelector('.realtime-token-list').scrollTop = 500;
+
+  renderBoardView(playerContainer, { ...view, characters: [{ ...view.characters[0], hp: 8 }] }, { presentationMode: 'player' });
+  renderBoardView(previewContainer, { ...view, characters: [{ ...view.characters[0], hp: 8 }] }, { presentationMode: 'player', interactionMode: 'readOnly' });
+
+  assert.equal(playerContainer.querySelector('.realtime-token-list').scrollTop, 500);
+  assert.equal(previewContainer.querySelector('.realtime-token-list').scrollTop, 0);
+});
+
+test('active combatant change: the old offset is restored first, then the new active row is marked (nearest-scroll, not re-centered)', () => {
+  const { container } = makeContainer();
+  const tokens = crowdedTokens(30);
+  const view = playerShapedView({ tokens, initiative: [{ id: 'i1', tokenId: 't1', initiative: 15, position: 0, isActive: true }] });
+  renderBoardView(container, view, { presentationMode: 'player' });
+  container.querySelector('.realtime-token-list').scrollTop = 500;
+
+  const movedTurn = { ...view, initiative: [{ id: 'i1', tokenId: 't30', initiative: 15, position: 0, isActive: true }] };
+  renderBoardView(container, movedTurn, { presentationMode: 'player' });
+
+  // Priority 1 (restore) still applied even though the active combatant also changed.
+  assert.equal(container.querySelector('.realtime-token-list').scrollTop, 500);
+  assert.equal(container.querySelector('[data-token-id="t30"]').classList.contains('active-combatant'), true);
+  assert.equal(container.querySelector('[data-token-id="t1"]').classList.contains('active-combatant'), false);
+});

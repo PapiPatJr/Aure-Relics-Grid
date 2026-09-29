@@ -37,12 +37,26 @@
 
 import { buildPlayerFogStage } from '../fog/fogRenderer.js';
 
-// Corrective pass (crowded realtime combatants): remembers the last active tokenId this
-// specific container scrolled to, so a re-render triggered by an unrelated mutation (an HP
-// tick, a fog edit) never re-triggers a smooth scroll — only an actual initiative change does.
-// Keyed by container (not module-global) because the real Player Screen panel and the DM's
-// read-only preview panel are two independent containers that can both be mounted at once.
-const lastActiveTokenIdByContainer = new WeakMap();
+// Final corrective pass (scroll persistence): remembers, per container, the last active tokenId
+// AND the logical context (session + active level) that container was last rendered for. Keyed by
+// container (not module-global) because the real Player Screen panel and the DM's read-only
+// preview panel are two independent containers that can both be mounted at once, and must never
+// share state. `activeTokenId` alone (the previous corrective pass's version of this map) is
+// reused for the existing "only auto-scroll when the active combatant actually changed" gate;
+// `contextKey` is new and gates scroll-offset RESTORATION specifically — see renderBoardView.
+const containerContextByContainer = new WeakMap();
+
+function contextKeyFor(displayView) {
+  return `${displayView.sessionId ?? ''}:${displayView.session?.activeLevelId ?? ''}`;
+}
+
+function captureListScrollOffsets(container) {
+  return {
+    tokens: container.querySelector('.realtime-token-list')?.scrollTop ?? 0,
+    characters: container.querySelector('.realtime-character-list')?.scrollTop ?? 0,
+    initiative: container.querySelector('.realtime-initiative-list')?.scrollTop ?? 0,
+  };
+}
 
 function createActionButton(doc, action, label, dataset = {}) {
   const button = doc.createElement('button');
@@ -169,8 +183,21 @@ export function renderBoardView(container, displayView, options) {
   if (displayView == null) {
     container.hidden = true;
     container.innerHTML = '';
+    // Teardown/access-loss: this container may be reused later (e.g. dm-screen.js's preview
+    // panel is hidden+cleared, not disposed) for a session this viewer may not even be the same
+    // recipient of any more. Never let a torn-down context's scroll/active state leak forward.
+    containerContextByContainer.delete(container);
     return;
   }
+
+  const contextKey = contextKeyFor(displayView);
+  const previous = containerContextByContainer.get(container);
+  // Restoring a manual scroll offset only makes sense across a rerender of the SAME logical
+  // view (same session, same active level, same container) — never across a genuinely different
+  // context (a different session/level, or this container's first render since being torn down),
+  // where the old encounter's scroll position has nothing to do with the new one.
+  const sameContext = previous?.contextKey === contextKey;
+  const scrollToRestore = sameContext ? captureListScrollOffsets(container) : null;
 
   container.hidden = false;
   container.innerHTML = '';
@@ -235,16 +262,28 @@ export function renderBoardView(container, displayView, options) {
     container.appendChild(dmSection);
   }
 
-  // Only scroll when the active combatant actually changed since this container's last render
-  // (never on every re-render — an HP tick or fog edit must not smooth-scroll the screen).
-  // Looking the row up on `container` (this render's own freshly-built DOM) rather than acting
-  // on `activeTokenId` directly means a hidden/unauthorized token can never be scrolled to: if
+  // Priority 1 (same context, same active combatant): restore the manual scroll offset the user
+  // left each list at. Setting scrollTop past a list's current max clamps to it natively — a
+  // shrunk list (an opponent removed) just settles at its new bottom, no extra code needed.
+  if (scrollToRestore) {
+    tokenList.scrollTop = scrollToRestore.tokens;
+    characterList.scrollTop = scrollToRestore.characters;
+    initiativeList.scrollTop = scrollToRestore.initiative;
+  }
+
+  // Priority 2 (active combatant changed): only scroll when the active combatant actually
+  // changed since this container's last render (never on every re-render — an HP tick or fog
+  // edit must not smooth-scroll the screen) — and only after the offset restore above, so this
+  // nudges the freshly-restored position the minimum amount needed, never re-centers it. Looking
+  // the row up on `container` (this render's own freshly-built DOM) rather than acting on
+  // `activeTokenId` directly means a hidden/unauthorized token can never be scrolled to: if
   // deriveDisplayView filtered it out, tokenList never contains a matching row and this is a
   // no-op, so becoming active never reveals it.
-  if (activeTokenId !== undefined && activeTokenId !== lastActiveTokenIdByContainer.get(container)) {
+  if (activeTokenId !== undefined && activeTokenId !== previous?.activeTokenId) {
     Array.from(tokenList.children)
       .find(row => row.dataset.tokenId === activeTokenId)
       ?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
   }
-  lastActiveTokenIdByContainer.set(container, activeTokenId);
+
+  containerContextByContainer.set(container, { contextKey, activeTokenId });
 }

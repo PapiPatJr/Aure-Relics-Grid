@@ -6,6 +6,7 @@ import {
   insertTokens,
   insertHiddenToken,
   setActiveInitiative,
+  bumpCharacterHp,
   createApprovedCharacters,
   openPlayerScreen,
   expectNoDmProjection,
@@ -101,6 +102,21 @@ test('crowded realtime encounter: DM screen keeps every combatant reachable with
       expect(await tokenList.evaluate(el => el.scrollTop)).toBe(tokenScrollBefore);
     });
 
+    await test.step('an unrelated snapshot update (same session, same active token) preserves both scroll offsets', async () => {
+      const tokenScrollBefore = await tokenList.evaluate(el => el.scrollTop);
+      const characterScrollBefore = await characterList.evaluate(el => el.scrollTop);
+      expect(tokenScrollBefore).toBeGreaterThan(0);
+      expect(characterScrollBefore).toBeGreaterThan(0);
+
+      await bumpCharacterHp(room, characters.characterIds[0], 7);
+      // Proves a real rerender actually happened (the whole point: an unrelated authoritative
+      // update must still rebuild the DOM) — this is not a no-op update we're papering over.
+      await expect(characterList).toContainText('HP 7/10', { timeout: 20_000 });
+
+      expect(await tokenList.evaluate(el => el.scrollTop)).toBe(tokenScrollBefore);
+      expect(await characterList.evaluate(el => el.scrollTop)).toBe(characterScrollBefore);
+    });
+
     await test.step('advancing to an off-screen active opponent scrolls it into view', async () => {
       await tokenList.evaluate(el => { el.scrollTop = 0; });
       const lastOpponentId = tokens.find(t => t.label === OPPONENT_LABELS.at(-1)).id;
@@ -170,6 +186,19 @@ test('crowded realtime encounter: Player Screen stays read-only, security-scoped
       const lastCharacter = characterList.locator('.realtime-character-card').last();
       expect(await isRowVisibleWithinList(characterList, lastCharacter)).toBe(true);
       expect(await tokenList.evaluate(el => el.scrollTop)).toBe(tokenScrollBefore);
+    });
+
+    await test.step('an unrelated snapshot update (same session, same active token) preserves both scroll offsets', async () => {
+      const tokenScrollBefore = await tokenList.evaluate(el => el.scrollTop);
+      const characterScrollBefore = await characterList.evaluate(el => el.scrollTop);
+      expect(tokenScrollBefore).toBeGreaterThan(0);
+      expect(characterScrollBefore).toBeGreaterThan(0);
+
+      await bumpCharacterHp(room, characters.characterIds[0], 7);
+      await expect(characterList).toContainText('HP 7/10', { timeout: 20_000 });
+
+      expect(await tokenList.evaluate(el => el.scrollTop)).toBe(tokenScrollBefore);
+      expect(await characterList.evaluate(el => el.scrollTop)).toBe(characterScrollBefore);
     });
 
     await test.step('advancing to an off-screen active opponent scrolls it into view for the player too', async () => {

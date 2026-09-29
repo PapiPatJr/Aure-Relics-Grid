@@ -2693,11 +2693,26 @@ function sortRealtimeTokensForDisplay(tokens) {
   });
 }
 
-// Corrective pass (crowded realtime combatants): only one DM realtime panel ever exists
-// (getRealtimeSessionPanel() is a singleton), so a single module-level watermark is enough —
-// mirrors the WeakMap-per-container version in src/board/boardViewRenderer.js, which needs one
-// because that module can have two independent panels (Player Screen + DM preview) mounted at once.
+// Final corrective pass (scroll persistence): only one DM realtime panel ever exists
+// (getRealtimeSessionPanel() is a singleton), so a single pair of module-level watermarks is
+// enough — mirrors the per-container WeakMap in src/board/boardViewRenderer.js, which needs one
+// because that module can have two independent panels (Player Screen + DM preview) mounted at
+// once. `realtimeContextKey` gates scroll-offset restoration (never leak an old session/level's
+// scroll into a new one); `lastActiveRealtimeTokenId` gates the existing active-scroll-into-view.
+let realtimeContextKey;
 let lastActiveRealtimeTokenId;
+
+function realtimeContextKeyFor(view) {
+  return `${view.sessionId ?? ""}:${view.session?.activeLevelId ?? ""}`;
+}
+
+function captureRealtimeListScrollOffsets(panel) {
+  return {
+    tokens: panel.querySelector(".realtime-token-list")?.scrollTop ?? 0,
+    characters: panel.querySelector(".realtime-character-list")?.scrollTop ?? 0,
+    initiative: panel.querySelector(".realtime-initiative-list")?.scrollTop ?? 0,
+  };
+}
 
 function renderRealtimeTokenRow(token, authority, isActive) {
   const row = document.createElement("li");
@@ -2787,8 +2802,20 @@ function applyRealtimeSnapshot(view) {
   if (!view) {
     panel.hidden = true;
     panel.innerHTML = "";
+    // Teardown/access-loss: this singleton panel is reused for whatever session/level comes
+    // next, so its old scroll/active context must never leak forward into that.
+    realtimeContextKey = undefined;
+    lastActiveRealtimeTokenId = undefined;
     return;
   }
+
+  const contextKey = realtimeContextKeyFor(view);
+  const sameContext = realtimeContextKey === contextKey;
+  // Restoring a manual scroll offset only makes sense across a rerender of the SAME logical view
+  // (same session, same active level) — never across a genuinely different context, where the
+  // old encounter's scroll position has nothing to do with the new one.
+  const scrollToRestore = sameContext ? captureRealtimeListScrollOffsets(panel) : null;
+  const previousActiveTokenId = lastActiveRealtimeTokenId;
 
   panel.hidden = false;
   panel.innerHTML = "";
@@ -2844,13 +2871,26 @@ function applyRealtimeSnapshot(view) {
     panel.appendChild(dmSection);
   }
 
-  // Only scroll when the active combatant actually changed since the last render (never on
-  // every re-render — an HP tick or fog edit must not smooth-scroll the DM's screen).
-  if (activeTokenId !== undefined && activeTokenId !== lastActiveRealtimeTokenId) {
+  // Priority 1 (same context, same active combatant): restore the manual scroll offset the user
+  // left each list at. Setting scrollTop past a list's current max clamps to it natively — a
+  // shrunk list (an opponent removed) just settles at its new bottom, no extra code needed.
+  if (scrollToRestore) {
+    tokenList.scrollTop = scrollToRestore.tokens;
+    characterList.scrollTop = scrollToRestore.characters;
+    initiativeList.scrollTop = scrollToRestore.initiative;
+  }
+
+  // Priority 2 (active combatant changed): only scroll when the active combatant actually
+  // changed since the last render (never on every re-render — an HP tick or fog edit must not
+  // smooth-scroll the DM's screen) — and only after the offset restore above, so this nudges the
+  // freshly-restored position the minimum amount needed, never re-centers it.
+  if (activeTokenId !== undefined && activeTokenId !== previousActiveTokenId) {
     Array.from(tokenList.children)
       .find(row => row.dataset.tokenId === activeTokenId)
       ?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
   }
+
+  realtimeContextKey = contextKey;
   lastActiveRealtimeTokenId = activeTokenId;
 }
 

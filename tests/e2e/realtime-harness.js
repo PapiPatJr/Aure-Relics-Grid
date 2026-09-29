@@ -292,6 +292,16 @@ export async function setActiveInitiative(room, tokenId) {
   return entry;
 }
 
+/** Bump one character's HP directly (a plain `update`, not the `character.update` RPC — this
+ * exists purely as an "unrelated mutation" trigger for the scroll-persistence regression, which
+ * needs *some* authoritative snapshot change unconnected to the token list/active turn being
+ * scrolled; it is not itself under test here, so the real RPC path's own validation is beside the
+ * point). Fires the same sync_changed trigger as any other write, so it reaches an already-open
+ * DM/Player page exactly like a real HP edit would. */
+export async function bumpCharacterHp(room, characterId, hp) {
+  runSql(`update public.characters set hp=${hp} where id=${sqlLiteral(characterId)} returning id;`);
+}
+
 /** Bulk-insert many bosses/enemies/NPCs directly, for the same reason insertHiddenToken() does
  * (no production path creates `public.tokens` rows yet) — this is the crowded-realtime-combatants
  * regression's opponent roster, which needs 30 rows and would be impractical to seed one RPC call

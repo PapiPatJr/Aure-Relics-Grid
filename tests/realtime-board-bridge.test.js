@@ -235,3 +235,132 @@ test('own-character HP controls render only for the character matching authority
     dom.window.close();
   }
 });
+
+// --- Tuesday Online Package 2B: DM management spatial board (#realtimeSessionPanel) ---
+
+function spatialToken(overrides = {}) {
+  return { id: 'st1', kind: 'enemy', label: 'Goblin', x: 0, y: 0, width: 1, height: 1, isVisible: true, ...overrides };
+}
+
+test('a manager view with fog+tokens spatially renders a .spatial-board-stage inside #realtimeSessionPanel', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    const view = createBoardView(baseSnapshot({
+      authority: { canManage: true, ownCharacterId: null },
+      dm: { tokenDetails: [], notes: [], activity: [] },
+      fog: { levelId: 'level-1', width: 10, height: 10, enabled: true, revealedRuns: [] },
+      tokens: [spatialToken({ x: 5, y: 5 })],
+    }));
+    window.aureRelicsApplyRealtimeSnapshot(view);
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    const stage = panel.querySelector('.spatial-board-stage');
+    assert.ok(stage, 'spatial board stage renders in the DM management panel');
+    const el = stage.querySelector('[data-spatial-token-id="st1"]');
+    assert.ok(el);
+    assert.equal(el.style.left, '50%');
+    assert.equal(el.style.top, '50%');
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('a DM-hidden token renders in the management stage with the hidden treatment', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    const view = createBoardView(baseSnapshot({
+      authority: { canManage: true, ownCharacterId: null },
+      dm: { tokenDetails: [], notes: [], activity: [] },
+      fog: { levelId: 'level-1', width: 10, height: 10, enabled: true, revealedRuns: [] },
+      tokens: [spatialToken({ id: 'visible' }), spatialToken({ id: 'hidden', x: 1, isVisible: false })],
+    }));
+    window.aureRelicsApplyRealtimeSnapshot(view);
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    const hiddenEl = panel.querySelector('[data-spatial-token-id="hidden"]');
+    assert.ok(hiddenEl.classList.contains('spatial-token--hidden'));
+    assert.ok(!panel.querySelector('[data-spatial-token-id="visible"]').classList.contains('spatial-token--hidden'));
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('the active-initiative token gets spatial active styling in the DM management stage', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    const view = createBoardView(baseSnapshot({
+      authority: { canManage: true, ownCharacterId: null },
+      dm: { tokenDetails: [], notes: [], activity: [] },
+      fog: { levelId: 'level-1', width: 10, height: 10, enabled: true, revealedRuns: [] },
+      tokens: [spatialToken({ id: 'st1' }), spatialToken({ id: 'st2', x: 1 })],
+      initiative: [{ id: 'i1', tokenId: 'st2', initiative: 15, position: 0, isActive: true }],
+    }));
+    window.aureRelicsApplyRealtimeSnapshot(view);
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    assert.ok(panel.querySelector('[data-spatial-token-id="st2"]').classList.contains('spatial-token--active'));
+    assert.ok(!panel.querySelector('[data-spatial-token-id="st1"]').classList.contains('spatial-token--active'));
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('no fog (no active level) means no spatial board stage in the DM management panel', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    const view = createBoardView(baseSnapshot({
+      authority: { canManage: true, ownCharacterId: null },
+      dm: { tokenDetails: [], notes: [], activity: [] },
+      fog: null,
+      tokens: [spatialToken()],
+    }));
+    window.aureRelicsApplyRealtimeSnapshot(view);
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    assert.equal(panel.querySelector('.spatial-board-stage'), null);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('a non-manager (player) view never renders the DM spatial board stage even if it somehow carried fog', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    const view = createBoardView(baseSnapshot({
+      authority: { canManage: false, ownCharacterId: null },
+      dm: null,
+      fog: { levelId: 'level-1', width: 10, height: 10, enabled: true, revealedRuns: [] },
+      tokens: [spatialToken()],
+    }));
+    window.aureRelicsApplyRealtimeSnapshot(view);
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    assert.equal(panel.querySelector('.spatial-board-stage'), null);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('replacement semantics: a rerender omitting a previously-rendered token removes its spatial element from the management stage', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    const fog = { levelId: 'level-1', width: 10, height: 10, enabled: true, revealedRuns: [] };
+    const authority = { canManage: true, ownCharacterId: null };
+    const dmField = { tokenDetails: [], notes: [], activity: [] };
+
+    window.aureRelicsApplyRealtimeSnapshot(createBoardView(baseSnapshot({
+      authority, dm: dmField, fog, tokens: [spatialToken({ id: 'gone' }), spatialToken({ id: 'stays', x: 1 })],
+    })));
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    assert.ok(panel.querySelector('[data-spatial-token-id="gone"]'));
+
+    window.aureRelicsApplyRealtimeSnapshot(createBoardView(baseSnapshot({
+      authority, dm: dmField, fog, tokens: [spatialToken({ id: 'stays', x: 1 })],
+    })));
+    assert.equal(panel.querySelector('[data-spatial-token-id="gone"]'), null);
+    assert.ok(panel.querySelector('[data-spatial-token-id="stays"]'));
+  } finally {
+    dom.window.close();
+  }
+});

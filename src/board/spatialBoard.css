@@ -1,0 +1,73 @@
+/*
+ * Spatial token layer (Tuesday Online Package 2B). Rendered by
+ * src/board/spatialTokenRenderer.js and, for the DM's classic-script management board only, by
+ * script.js's own local twin of the same geometry (script.js is a plain classic script with no
+ * imports — see its "Realtime session bridge" comment block — so it cannot import this ES module;
+ * both consumers share these class names/CSS so they stay visually identical even though the DOM-
+ * building code is necessarily duplicated once, the same way this file's `.realtime-token-list`
+ * etc. counterparts already are between script.js and src/board/boardViewRenderer.js).
+ *
+ * `.spatial-token-layer` is mounted either directly inside the existing `.fog-player-stage`
+ * (real Player Screen and DM Player Preview — see boardViewRenderer.js) so tokens and fog share
+ * one aspect-ratio box, or inside a standalone `.spatial-board-stage` (DM management view, which
+ * has no fog concealment canvas of its own). Positioning here is purely presentational — layout
+ * math (the percentage left/top/width/height) is set inline per-token by JS from the authoritative
+ * grid coordinates, never computed in CSS.
+ */
+
+.spatial-board-stage {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: var(--board-cols, 1) / var(--board-rows, 1);
+  overflow: hidden;
+  border: 1px solid var(--border-dark, #4c3b22);
+  background: var(--ink-black, #080705);
+  margin-bottom: 8px;
+}
+
+.spatial-board-stage-base {
+  position: absolute;
+  inset: 0;
+  background: var(--panel, #18130d);
+}
+
+.spatial-token-layer {
+  position: absolute;
+  inset: 0;
+}
+
+.spatial-token {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 900;
+  outline: 1px solid rgba(255, 255, 255, 0.25);
+  background: #555;
+}
+
+.spatial-token--player { background: #1f35ff; }
+.spatial-token--enemy { background: #c13a4b; }
+.spatial-token--npc { background: #4f9a46; }
+.spatial-token--boss { background: #7a1b94; }
+
+.spatial-token--active {
+  z-index: 2;
+  box-shadow:
+    0 0 0 2px var(--gold-bright, #f5d98b),
+    0 0 6px 2px rgba(245, 217, 139, 0.55);
+}
+
+.spatial-token--hidden {
+  opacity: 0.55;
+  outline: 1px dashed var(--gold, #c9a95c);
+}
+
+.spatial-token-glyph {
+  pointer-events: none;
+}

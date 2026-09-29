@@ -36,6 +36,7 @@
  */
 
 import { buildPlayerFogStage } from '../fog/fogRenderer.js';
+import { buildSpatialTokenLayer, buildSpatialBoardStage } from './spatialTokenRenderer.js';
 
 // Final corrective pass (scroll persistence): remembers, per container, the last active tokenId
 // AND the logical context (session + active level) that container was last rendered for. Keyed by
@@ -214,6 +215,21 @@ export function renderBoardView(container, displayView, options) {
 
   if (presentationMode === 'player' && fog) {
     const stage = buildPlayerFogStage(doc, fog);
+    if (stage) {
+      // Mounted inside the exact same aspect-ratio box the fog canvas already occupies, so a
+      // token cell and a fog cell are always the same rendered pixel — never a second,
+      // independently-sized coordinate system (Package 2B).
+      const tokenLayer = buildSpatialTokenLayer(doc, { width: fog.width, height: fog.height, tokens, activeTokenId, showHiddenTreatment: false });
+      if (tokenLayer) stage.appendChild(tokenLayer);
+      container.appendChild(stage);
+    }
+  }
+
+  // DM management view: every manager-authorized token for the active level, including hidden
+  // ones (distinguished, never omitted) — gated exactly like the DM-only section below, since
+  // `dm` is only ever non-null for a real manager projection.
+  if (presentationMode === 'dm' && !readOnly && dm && fog) {
+    const stage = buildSpatialBoardStage(doc, { width: fog.width, height: fog.height, tokens, activeTokenId, showHiddenTreatment: true });
     if (stage) container.appendChild(stage);
   }
 

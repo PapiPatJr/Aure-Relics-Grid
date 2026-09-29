@@ -2792,6 +2792,116 @@ function renderRealtimeInitiativeRow(entry) {
   return row;
 }
 
+// --- Tuesday Online Package 2B: DM management spatial token board -----------------------------
+//
+// A local twin of src/board/spatialTokenRenderer.js's geometry/DOM-building logic. script.js is a
+// plain classic script (see this block's own header comment above and index.html's
+// `<script src="script.js">` with no `type="module"`) and cannot statically or dynamically import
+// an ES module here without breaking tests/realtime-board-bridge.test.js's `dom.window.eval()`
+// harness, so this necessarily duplicates the shared module's math rather than importing it — the
+// exact same tradeoff this file already accepts for the rail lists above (renderRealtimeTokenRow
+// etc. duplicate src/board/boardViewRenderer.js's renderTokenRow etc.). Both consumers share the
+// same class names and src/board/spatialBoard.css rules, so they stay visually identical even
+// though the DOM-building code is duplicated once.
+
+const REALTIME_SPATIAL_KIND_MODIFIERS = new Set(["player", "enemy", "npc", "boss"]);
+
+function isRealtimeSpatialPositiveInt(value) {
+  return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0;
+}
+
+function isRealtimeSpatialNonNegativeInt(value) {
+  return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0;
+}
+
+function computeRealtimeSpatialRectPercent(token, boardWidth, boardHeight) {
+  if (!isRealtimeSpatialPositiveInt(boardWidth) || !isRealtimeSpatialPositiveInt(boardHeight)) return null;
+  const { x, y, width, height } = token ?? {};
+  if (!isRealtimeSpatialNonNegativeInt(x) || !isRealtimeSpatialNonNegativeInt(y)) return null;
+  if (!isRealtimeSpatialPositiveInt(width) || !isRealtimeSpatialPositiveInt(height)) return null;
+  if (x + width > boardWidth || y + height > boardHeight) return null;
+  return {
+    leftPct: (x / boardWidth) * 100,
+    topPct: (y / boardHeight) * 100,
+    widthPct: (width / boardWidth) * 100,
+    heightPct: (height / boardHeight) * 100,
+  };
+}
+
+function realtimeSpatialAriaLabel(token, isActive, hiddenFromPlayers) {
+  const bits = [token.label || "Token", token.kind || "token"];
+  if (isActive) bits.push("active turn");
+  if (hiddenFromPlayers) bits.push("hidden from players");
+  return bits.join(", ");
+}
+
+function renderRealtimeSpatialToken(token, boardWidth, boardHeight, isActive) {
+  if (!token || token.id == null) return null;
+  const rect = computeRealtimeSpatialRectPercent(token, boardWidth, boardHeight);
+  if (!rect) return null;
+
+  // DM management view always shows every manager-authorized token plainly, including hidden
+  // ones — distinguished with a treatment, never omitted (only a real player/preview projection,
+  // rendered by src/board/boardViewRenderer.js, ever needs to omit one, and it never reaches
+  // this file).
+  const hiddenFromPlayers = token.isVisible === false;
+
+  const el = document.createElement("div");
+  el.className = "spatial-token";
+  if (REALTIME_SPATIAL_KIND_MODIFIERS.has(token.kind)) el.classList.add(`spatial-token--${token.kind}`);
+  if (isActive) el.classList.add("spatial-token--active");
+  if (hiddenFromPlayers) el.classList.add("spatial-token--hidden");
+
+  el.style.left = `${rect.leftPct}%`;
+  el.style.top = `${rect.topPct}%`;
+  el.style.width = `${rect.widthPct}%`;
+  el.style.height = `${rect.heightPct}%`;
+
+  const label = realtimeSpatialAriaLabel(token, isActive, hiddenFromPlayers);
+  el.setAttribute("role", "img");
+  el.setAttribute("aria-label", label);
+  el.title = label;
+
+  const glyph = document.createElement("span");
+  glyph.className = "spatial-token-glyph";
+  glyph.setAttribute("aria-hidden", "true");
+  const trimmedLabel = typeof token.label === "string" ? token.label.trim() : "";
+  glyph.textContent = trimmedLabel ? trimmedLabel.slice(0, 2).toUpperCase() : "?";
+  el.appendChild(glyph);
+
+  el.dataset.spatialTokenId = token.id;
+  el.dataset.tokenKind = token.kind ?? "";
+  el.dataset.tokenX = String(token.x);
+  el.dataset.tokenY = String(token.y);
+  el.dataset.tokenWidth = String(token.width);
+  el.dataset.tokenHeight = String(token.height);
+
+  return el;
+}
+
+function buildRealtimeSpatialBoardStage(width, height, tokens, activeTokenId) {
+  if (!isRealtimeSpatialPositiveInt(width) || !isRealtimeSpatialPositiveInt(height)) return null;
+
+  const stage = document.createElement("div");
+  stage.className = "spatial-board-stage";
+  stage.style.setProperty("--board-cols", String(width));
+  stage.style.setProperty("--board-rows", String(height));
+
+  const base = document.createElement("div");
+  base.className = "spatial-board-stage-base";
+  stage.appendChild(base);
+
+  const layer = document.createElement("div");
+  layer.className = "spatial-token-layer";
+  (tokens || []).forEach(token => {
+    const el = renderRealtimeSpatialToken(token, width, height, token?.id != null && token.id === activeTokenId);
+    if (el) layer.appendChild(el);
+  });
+  stage.appendChild(layer);
+
+  return stage;
+}
+
 /**
  * Render a src/realtime/boardBridge.js BoardView (or null/undefined to hide/clear). Called by
  * src/realtime/** integration code; never called from any local/offline code path above.
@@ -2829,6 +2939,14 @@ function applyRealtimeSnapshot(view) {
   }
 
   const activeTokenId = (view.initiative || []).find(entry => entry.isActive)?.tokenId;
+
+  // Package 2B: every manager-authorized token spatially placed on the active level's grid,
+  // hidden ones distinguished (never omitted) — gated on view.dm exactly like the DM-only
+  // section below, since a real manager projection is the only one that ever carries it.
+  if (view.dm && view.fog) {
+    const spatialStage = buildRealtimeSpatialBoardStage(view.fog.width, view.fog.height, view.tokens, activeTokenId);
+    if (spatialStage) panel.appendChild(spatialStage);
+  }
 
   if ((view.tokens || []).length > 0) {
     panel.appendChild(createRealtimeRailCountHeader("Opponents", view.tokens.length));

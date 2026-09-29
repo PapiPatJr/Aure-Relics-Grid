@@ -288,3 +288,142 @@ test('active combatant change: the old offset is restored first, then the new ac
   assert.equal(container.querySelector('[data-token-id="t30"]').classList.contains('active-combatant'), true);
   assert.equal(container.querySelector('[data-token-id="t1"]').classList.contains('active-combatant'), false);
 });
+
+// --- Tuesday Online Package 2B: spatial token layer integration ---
+
+function spatialToken(overrides = {}) {
+  return { id: 'st1', kind: 'enemy', label: 'Goblin', x: 0, y: 0, width: 1, height: 1, isVisible: true, ...overrides };
+}
+
+test('a player-shaped view with fog+tokens mounts the spatial token layer inside the same .fog-player-stage as the fog canvas', () => {
+  const { container } = makeContainer();
+  renderBoardView(container, playerShapedView({ fog: fogFixture(), tokens: [spatialToken()] }), { presentationMode: 'player' });
+  const stage = container.querySelector('.fog-player-stage');
+  assert.ok(stage);
+  const layer = stage.querySelector('.spatial-token-layer');
+  assert.ok(layer, 'spatial token layer is mounted inside the fog stage, not a second box');
+  assert.ok(layer.querySelector('[data-spatial-token-id="st1"]'));
+});
+
+test('spatial token position is derived from fog.width/height — the same authoritative dimensions Fog itself uses', () => {
+  const { container } = makeContainer();
+  const fog = fogFixture({ width: 10, height: 10 });
+  renderBoardView(container, playerShapedView({ fog, tokens: [spatialToken({ x: 5, y: 5 })] }), { presentationMode: 'player' });
+  const el = container.querySelector('[data-spatial-token-id="st1"]');
+  assert.equal(el.style.left, '50%');
+  assert.equal(el.style.top, '50%');
+});
+
+test('no fog means no spatial token layer either (no board dimensions to place a token in)', () => {
+  const { container } = makeContainer();
+  renderBoardView(container, playerShapedView({ fog: null, tokens: [spatialToken()] }), { presentationMode: 'player' });
+  assert.equal(container.querySelector('.spatial-token-layer'), null);
+});
+
+test('the DM management view (presentationMode "dm") renders a standalone .spatial-board-stage', () => {
+  const { container } = makeContainer();
+  renderBoardView(container, dmShapedView({ fog: fogFixture(), tokens: [spatialToken()] }), { presentationMode: 'dm' });
+  const stage = container.querySelector('.spatial-board-stage');
+  assert.ok(stage);
+  assert.ok(stage.querySelector('[data-spatial-token-id="st1"]'));
+});
+
+test('presentationMode "player" never renders a .spatial-board-stage (tokens live inside .fog-player-stage instead)', () => {
+  const { container } = makeContainer();
+  renderBoardView(container, playerShapedView({ fog: fogFixture(), tokens: [spatialToken()] }), { presentationMode: 'player' });
+  assert.equal(container.querySelector('.spatial-board-stage'), null);
+});
+
+test('a DM-only hidden token is spatially rendered with the hidden treatment in DM mode', () => {
+  const { container } = makeContainer();
+  const tokens = [spatialToken({ id: 'visible' }), spatialToken({ id: 'hidden', x: 1, isVisible: false })];
+  renderBoardView(container, dmShapedView({ fog: fogFixture(), tokens }), { presentationMode: 'dm' });
+  const hiddenEl = container.querySelector('[data-spatial-token-id="hidden"]');
+  assert.ok(hiddenEl);
+  assert.ok(hiddenEl.classList.contains('spatial-token--hidden'));
+  const visibleEl = container.querySelector('[data-spatial-token-id="visible"]');
+  assert.ok(!visibleEl.classList.contains('spatial-token--hidden'));
+});
+
+test('the DM Player Preview path (presentationMode "player", interactionMode "readOnly") renders the identical spatial layer as the real Player Screen for the same fog+tokens', () => {
+  const fog = fogFixture();
+  const tokens = [spatialToken({ x: 1, y: 2 }), spatialToken({ id: 'st2', x: 3, y: 4 })];
+
+  const { container: playerContainer } = makeContainer();
+  renderBoardView(playerContainer, playerShapedView({ fog, tokens }), { presentationMode: 'player' });
+
+  const { container: previewContainer } = makeContainer();
+  renderBoardView(previewContainer, dmShapedView({ fog, tokens }), { presentationMode: 'player', interactionMode: 'readOnly' });
+
+  const playerTokens = playerContainer.querySelectorAll('.spatial-token');
+  const previewTokens = previewContainer.querySelectorAll('.spatial-token');
+  assert.equal(playerTokens.length, previewTokens.length);
+  for (let i = 0; i < playerTokens.length; i += 1) {
+    assert.equal(playerTokens[i].style.left, previewTokens[i].style.left);
+    assert.equal(playerTokens[i].style.top, previewTokens[i].style.top);
+  }
+});
+
+test('a DM-shaped view rendered as presentationMode "player" never shows the hidden-token treatment, even for a defensively-adversarial hidden token in the array', () => {
+  const { container } = makeContainer();
+  const tokens = [spatialToken({ isVisible: false })];
+  renderBoardView(container, dmShapedView({ fog: fogFixture(), tokens }), { presentationMode: 'player', interactionMode: 'readOnly' });
+  const el = container.querySelector('[data-spatial-token-id="st1"]');
+  assert.ok(el);
+  assert.ok(!el.classList.contains('spatial-token--hidden'));
+});
+
+test('replacement semantics: a rerender whose tokens omit a previously-rendered token removes its spatial element (no stale ghost)', () => {
+  const { container } = makeContainer();
+  const fog = fogFixture();
+  renderBoardView(container, playerShapedView({ fog, tokens: [spatialToken({ id: 'gone' }), spatialToken({ id: 'stays', x: 1 })] }), { presentationMode: 'player' });
+  assert.ok(container.querySelector('[data-spatial-token-id="gone"]'));
+
+  renderBoardView(container, playerShapedView({ fog, tokens: [spatialToken({ id: 'stays', x: 1 })] }), { presentationMode: 'player' });
+  assert.equal(container.querySelector('[data-spatial-token-id="gone"]'), null);
+  assert.ok(container.querySelector('[data-spatial-token-id="stays"]'));
+});
+
+test('movement by snapshot: a newer view with a changed token x/y rerenders the token at its new position, without calling any mutation', () => {
+  const { container } = makeContainer();
+  const fog = fogFixture({ width: 10, height: 10 });
+  renderBoardView(container, playerShapedView({ fog, tokens: [spatialToken({ x: 2, y: 2 })] }), { presentationMode: 'player' });
+  assert.equal(container.querySelector('[data-spatial-token-id="st1"]').style.left, '20%');
+
+  renderBoardView(container, playerShapedView({ fog, tokens: [spatialToken({ x: 8, y: 2 })] }), { presentationMode: 'player' });
+  assert.equal(container.querySelector('[data-spatial-token-id="st1"]').style.left, '80%');
+});
+
+test('the active-initiative token receives spatial active styling in both player and DM presentation', () => {
+  for (const presentationMode of ['player', 'dm']) {
+    const { container } = makeContainer();
+    const view = presentationMode === 'dm' ? dmShapedView : playerShapedView;
+    renderBoardView(container, view({
+      fog: fogFixture(),
+      tokens: [spatialToken({ id: 'st1' }), spatialToken({ id: 'st2', x: 1 })],
+      initiative: [{ id: 'i1', tokenId: 'st2', initiative: 15, position: 0, isActive: true }],
+    }), { presentationMode });
+    assert.ok(container.querySelector('[data-spatial-token-id="st2"]').classList.contains('spatial-token--active'));
+    assert.ok(!container.querySelector('[data-spatial-token-id="st1"]').classList.contains('spatial-token--active'));
+  }
+});
+
+test('a 200x200 board with a handful of tokens never explodes into a per-cell DOM tree, in either presentation mode', () => {
+  const tokens = Array.from({ length: 5 }, (_, i) => spatialToken({ id: `st${i}`, x: i, y: i }));
+  const fog = fogFixture({ width: 200, height: 200, revealedRuns: [] });
+
+  const { container: playerContainer } = makeContainer();
+  renderBoardView(playerContainer, playerShapedView({ fog, tokens }), { presentationMode: 'player' });
+  assert.ok(playerContainer.querySelector('.fog-player-stage').querySelectorAll('*').length < 30);
+
+  const { container: dmContainer } = makeContainer();
+  renderBoardView(dmContainer, dmShapedView({ fog, tokens }), { presentationMode: 'dm' });
+  assert.ok(dmContainer.querySelector('.spatial-board-stage').querySelectorAll('*').length < 30);
+});
+
+test('malformed token geometry is skipped rather than placed at a guessed position', () => {
+  const { container } = makeContainer();
+  const fog = fogFixture();
+  renderBoardView(container, playerShapedView({ fog, tokens: [{ id: 'malformed', kind: 'enemy', label: 'Bad', isVisible: true }] }), { presentationMode: 'player' });
+  assert.equal(container.querySelector('[data-spatial-token-id="malformed"]'), null);
+});

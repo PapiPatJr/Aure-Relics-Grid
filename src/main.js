@@ -4,6 +4,7 @@ import { startEntry } from './entry/app.js';
 import './entry/entry.css';
 import './characters/characters.css';
 import './fog/fog.css';
+import './board/spatialBoard.css';
 
 async function start() {
   try {

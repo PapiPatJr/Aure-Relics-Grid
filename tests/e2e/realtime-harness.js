@@ -322,6 +322,17 @@ export async function disableCampaignFog(room) {
   runSql(`update public.campaigns set fog_enabled=false where id=${sqlLiteral(room.hosted.campaign)} returning id;`);
 }
 
+/** Move a token directly (a plain `update`, not the real `token.move` RPC Package 2A added — same
+ * rationale as bumpCharacterHp(): this exists purely as an authoritative-snapshot-change trigger
+ * for the Package 2B spatial-rendering regression, which needs the DM/Player/Preview boards to
+ * receive a genuinely newer server-side position with no page reload, not a re-test of token.move's
+ * own RPC validation (Package 2A's own mutation-bridge tests already cover that). Fires the same
+ * sync_changed trigger as any other write, so it reaches an already-open DM/Player page exactly
+ * like a real move would. */
+export async function moveTokenDirect(room, tokenId, x, y) {
+  runSql(`update public.tokens set x=${x},y=${y} where id=${sqlLiteral(tokenId)} returning id;`);
+}
+
 /** Create `count` approved player characters through the real request_session_join /
  * review_session_guest / create_session_character / review_character RPCs — never a raw table
  * insert, since (unlike tokens/levels) a real production path already creates characters and this

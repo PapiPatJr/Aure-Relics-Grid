@@ -83,7 +83,7 @@ try{
   await received(aStream,changed.revision);
   sd=await snapshot(owner,s.id);await received(dmStream,sd.revision);
   ok(sd.dm.activity.some(x=>x.eventType==='character_card_changed'),'character HP change appears in owner activity');
-  await denied(mutate(a,s.id,command('character.update',sa.revision,card(ch.id,5))),'40001','stale own-character revision conflicts');
+  await denied(mutate(a,s.id,command('character.update',sa.revision,card(ch.id,5))),'PT409','stale own-character revision conflicts');
   for(const invalid of [null,[],{},command('unknown',sd.revision,{}),
     command('session.setRound',Number(sd.revision),{roundNumber:3}),
     command('session.setRound',sd.revision,{roundNumber:3},{unexpected:true}),
@@ -95,7 +95,7 @@ try{
   }
   const races=await Promise.all([mutate(owner,s.id,command('session.setRound',sd.revision,{roundNumber:2})),
     mutate(owner,s.id,command('session.setRound',sd.revision,{roundNumber:3}))]);
-  ok(races.filter(r=>!r.error).length===1 && races.some(r=>r.error?.code==='40001'),'concurrent same-watermark official commands have one winner');
+  ok(races.filter(r=>!r.error).length===1 && races.some(r=>r.error?.code==='PT409'),'concurrent same-watermark official commands have one winner');
   sa=await snapshot(a,s.id);await received(aStream,sa.revision);
 
   const beforePrivate=sa.revision;

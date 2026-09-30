@@ -101,9 +101,9 @@ test('expectedRevision propagates as the exact decimal string, never coerced thr
 
 // --- stale/conflict result handling + no automatic replay --------------------------------------
 
-test('a 40001 stale-revision conflict rehydrates exactly once, surfaces as ok:false, and never replays the mutation', async () => {
+test('a PT409 stale-revision conflict rehydrates exactly once, surfaces as ok:false, and never replays the mutation', async () => {
   const { engine, adapter } = await buildReadyEngine('1');
-  const conflict = Object.assign(new Error('stale revision'), { code: '40001' });
+  const conflict = Object.assign(new Error('Stale revision; hydrate before retrying'), { code: 'PT409' });
   adapter.setMutateResult(async () => { throw conflict; });
   const bridge = createFogMutationBridge(engine);
   const hydrateCallsBefore = adapter.calls.hydrate.length;

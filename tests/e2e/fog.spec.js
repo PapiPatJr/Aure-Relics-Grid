@@ -266,7 +266,7 @@ test.describe('Issue #10 fog of war', () => {
 
     // Each stroke waits for its own committed round trip before the next begins: back-to-back
     // strokes from the very same window race their own not-yet-advanced `expectedRevision`
-    // otherwise, which is a self-inflicted 40001 conflict this test isn't about.
+    // otherwise, which is a self-inflicted PT409 conflict this test isn't about.
     await clickPaintCell(room.dm, level, 3, 3);
     await expect.poll(() => readPlayerFogPixel(room.playerA, 3, 3).then(isRevealed)).toBe(true);
     await clickPaintCell(room.dm, level, 4, 4);
@@ -334,11 +334,10 @@ test.describe('Issue #10 fog of war', () => {
     await clickPaintCell(room.dm, level, 1, 1);
     await expect.poll(async () => (await snapshotFor(actors, room.dm, room.hosted.session)).fog.revealedRuns.length).toBeGreaterThan(0);
 
-    // A raised 40001 (transaction-rollback SQLSTATE class '40') surfaces over PostgREST as a
-    // genuine HTTP 500 with a `{"code":"40001",...}` body — the app's own conflict recovery
-    // (`isRevisionConflict`) reads that `code` from the body regardless of transport status, so
-    // this is the real, expected shape of a stale-revision rejection, not an application error.
-    actors.expectHttp(dmWindowB, '/rest/v1/rpc/mutate_session', 500);
+    // PT409 is PostgREST's typed custom-conflict SQLSTATE: it surfaces as HTTP 409 with a
+    // `{"code":"PT409",...}` body. Conflict recovery branches on that structured code, never
+    // on generic 409 status or message text.
+    actors.expectHttp(dmWindowB, '/rest/v1/rpc/mutate_session', 409);
     let calls = await countMutateSessionCalls(dmWindowB, async () => {
       await rootB.locator('[data-fog-action="reveal-all"]').click();
       await expect(dmWindowB.page.locator('#realtimeMutationNotice')).toContainText('session changed');

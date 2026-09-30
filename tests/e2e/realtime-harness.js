@@ -218,7 +218,7 @@ export async function channelCount(actor) {
 // `visibility.spec.js` already documents for tokens; Issue #13 owns the future level-authoring
 // workflow). `public.locations`/`public.levels` also carry no INSERT policy for any client role,
 // and `service_role` itself is never granted direct table access in this project's migrations
-// (confirmed empirically: a service-role REST insert is rejected with Postgres `42501`) — the app
+// (confirmed empirically: a service-role REST insert is rejected with Postgres `42501`) â€” the app
 // deliberately funnels every real write through `mutate_session`. These fixture helpers instead
 // shell out to the local Postgres superuser via the already-installed `supabase` CLI's own
 // `db query --local` (no new dependency, and the same binary `local-stack.mjs` already spawns for
@@ -237,7 +237,20 @@ function runSql(sql) {
   const stdout = execFileSync(process.execPath,
     ['node_modules/supabase/dist/supabase.js', 'db', 'query', '--local', sql, '--output', 'json'],
     { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-  return JSON.parse(stdout).rows;
+
+  const parsed = JSON.parse(stdout);
+
+  if (Array.isArray(parsed)) {
+    return parsed;
+  }
+
+  if (Array.isArray(parsed?.rows)) {
+    return parsed.rows;
+  }
+
+  throw new TypeError(
+    `Unexpected Supabase db query JSON output: ${stdout.slice(0, 500)}`
+  );
 }
 
 /** Create a location + level for `room.hosted.campaign` and make it the session's active level,
@@ -257,7 +270,7 @@ export async function createFogLevel(room, { width = 20, height = 20, name = 'Fo
 }
 
 /** Create a second level in the same location, deliberately left off the session's active-level
- * pointer (v0.9 has no level-switcher UI at all — design §11's "backend supports authorized
+ * pointer (v0.9 has no level-switcher UI at all â€” design Â§11's "backend supports authorized
  * mutations against any valid campaign level" is a backend-only contract in this release). Used
  * only for the non-presented-level isolation scenario. */
 export async function createExtraLevel(room, level, { width = 20, height = 20, name = 'Unpresented QA Level' } = {}) {
@@ -265,7 +278,7 @@ export async function createExtraLevel(room, level, { width = 20, height = 20, n
   return { locationId: level.locationId, levelId: extra.id, width, height };
 }
 
-/** Count `public.session_events` rows for `sessionId` — the direct, authoritative way to prove a
+/** Count `public.session_events` rows for `sessionId` â€” the direct, authoritative way to prove a
  * broad fog action fans out to a handful of recipient invalidations, never one row per cell. */
 export async function countSessionEvents(sessionId) {
   const [row] = runSql(`select count(*)::int as count from public.session_events where session_id=${sqlLiteral(sessionId)};`);
@@ -281,7 +294,7 @@ export async function insertHiddenToken(room, level, { x = 0, y = 0, label = 'Hi
 }
 
 /** Mark exactly one token's initiative entry active (clearing any previous one first, mirroring
- * the single-active-entry invariant `mutate_session`'s own `initiative.set` command enforces —
+ * the single-active-entry invariant `mutate_session`'s own `initiative.set` command enforces â€”
  * raw SQL bypasses that check, so this helper keeps it true by hand). Same "no production path"
  * rationale as insertTokens(): `initiative.set` can only update entries for tokens that already
  * exist, never create the crowded fixture's 30 rows from scratch, and this helper's job is purely
@@ -292,7 +305,7 @@ export async function setActiveInitiative(room, tokenId) {
   return entry;
 }
 
-/** Bump one character's HP directly (a plain `update`, not the `character.update` RPC — this
+/** Bump one character's HP directly (a plain `update`, not the `character.update` RPC â€” this
  * exists purely as an "unrelated mutation" trigger for the scroll-persistence regression, which
  * needs *some* authoritative snapshot change unconnected to the token list/active turn being
  * scrolled; it is not itself under test here, so the real RPC path's own validation is beside the
@@ -303,7 +316,7 @@ export async function bumpCharacterHp(room, characterId, hp) {
 }
 
 /** Bulk-insert many bosses/enemies/NPCs directly, for the same reason insertHiddenToken() does
- * (no production path creates `public.tokens` rows yet) — this is the crowded-realtime-combatants
+ * (no production path creates `public.tokens` rows yet) â€” this is the crowded-realtime-combatants
  * regression's opponent roster, which needs 30 rows and would be impractical to seed one RPC call
  * at a time even if one existed. Each entry is `{ kind, label, x, y, isVisible }` (isVisible
  * defaults to true, since this fixture's whole point is an *authorized* player-visible crowd).
@@ -322,7 +335,7 @@ export async function disableCampaignFog(room) {
   runSql(`update public.campaigns set fog_enabled=false where id=${sqlLiteral(room.hosted.campaign)} returning id;`);
 }
 
-/** Move a token directly (a plain `update`, not the real `token.move` RPC Package 2A added — same
+/** Move a token directly (a plain `update`, not the real `token.move` RPC Package 2A added â€” same
  * rationale as bumpCharacterHp(): this exists purely as an authoritative-snapshot-change trigger
  * for the Package 2B spatial-rendering regression, which needs the DM/Player/Preview boards to
  * receive a genuinely newer server-side position with no page reload, not a re-test of token.move's
@@ -334,12 +347,12 @@ export async function moveTokenDirect(room, tokenId, x, y) {
 }
 
 /** Create `count` approved player characters through the real request_session_join /
- * review_session_guest / create_session_character / review_character RPCs — never a raw table
+ * review_session_guest / create_session_character / review_character RPCs â€” never a raw table
  * insert, since (unlike tokens/levels) a real production path already creates characters and this
  * is fixture setup for a layout/scrolling regression, not a re-test of that join/approval flow
  * (already covered by entry.spec.js/realtime.spec.js). Uses lightweight anonymous Node-side
  * clients rather than 8 full browser contexts, since nothing here needs a rendered page. Returns
- * the created character ids and a `cleanup()` that deletes the throwaway anonymous auth.users —
+ * the created character ids and a `cleanup()` that deletes the throwaway anonymous auth.users â€”
  * these never pass through a tracked page's own /auth/v1/signup response, so fixtures.js's own
  * teardown (which only deletes users it saw that way) never touches them. */
 export async function createApprovedCharacters(actors, room, count, namePrefix = 'Fixture Player') {
@@ -426,7 +439,7 @@ export async function clickPaintCell(actor, fog, x, y) {
 
 /** Read one pixel straight from the shared player fog canvas's own backing store
  * (`fogRenderer.js`'s `buildPlayerFogStage`: `canvas.width/height` are exactly the board's
- * `fog.width`/`fog.height`, one native pixel per cell) — never a page screenshot, so CSS
+ * `fog.width`/`fog.height`, one native pixel per cell) â€” never a page screenshot, so CSS
  * upscaling/antialiasing never enters this read. Returns `null` if the stage/canvas is absent. */
 export async function readPlayerFogPixel(actor, x, y) {
   return actor.page.evaluate(({ x, y }) => {
@@ -482,11 +495,11 @@ export async function countMutateSessionCalls(actor, run) {
 }
 
 /** Freeze `actor`'s applied snapshot at its current content: every future
- * `get_session_snapshot` RPC call from this page (however triggered — the periodic timer, a
+ * `get_session_snapshot` RPC call from this page (however triggered â€” the periodic timer, a
  * focus event, or `mutateWithConflictRecovery`'s own post-conflict rehydrate) receives this same
  * frozen response instead of the server's true current state, so `engine`'s
  * `ctx.appliedRevision` can never advance while frozen. Never touches the realtime websocket
- * itself (it keeps delivering real invalidation events undisturbed — this only intercepts what
+ * itself (it keeps delivering real invalidation events undisturbed â€” this only intercepts what
  * the client learns from *acting* on one) and never aborts/errors a request (always a normal `200`
  * fulfil), so it produces none of the console/network noise a real transport failure would and
  * cannot trip `fixtures.js`'s strict unexpected-failure monitoring. This deterministically

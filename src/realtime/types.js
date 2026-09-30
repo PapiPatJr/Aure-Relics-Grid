@@ -128,7 +128,7 @@ export const SyncStatus = Object.freeze({
  * @property {(sessionId: string, command: MutationCommand & { schemaVersion: number, expectedRevision: string }) => Promise<unknown>} mutate
  *   Submit a mutation with the engine-attached `expectedRevision`. Backend authorization is
  *   authoritative — the adapter must not pre-authorize from client-side role, route or view-mode
- *   state. A stale `expectedRevision` is rejected by the backend (SQLSTATE 40001); the adapter
+ *   state. A stale `expectedRevision` is rejected by the backend (PT409; legacy 40001 is also recognized); the adapter
  *   surfaces that as a rejected promise rather than retrying.
  * @property {() => (void|Promise<void>)} disconnect
  *   Release any adapter-held transport resources. Safe to call when nothing is connected.

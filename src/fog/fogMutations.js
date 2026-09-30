@@ -14,8 +14,8 @@ import { mutateWithConflictRecovery } from '../realtime/mutationBridge.js';
  * never touches it as a JS `Number`), so a caller of this bridge cannot supply a stale or
  * fabricated one even by accident.
  *
- * Every method already runs through `mutateWithConflictRecovery`: a `40001` (stale revision)
- * or `40P01` (aborted concurrent transaction) rehydrates the authoritative snapshot exactly
+ * Every method already runs through `mutateWithConflictRecovery`: a `PT409` (stale revision),
+ * legacy `40001`, or `40P01` (aborted concurrent transaction) rehydrates the authoritative snapshot exactly
  * once and resolves `{ ok: false, conflict: true, error }` — it never retries the mutation
  * itself. A fog command can disclose or conceal information, so an automatic blind replay
  * after a conflict or a lost response is exactly the "reveal unintended cells" failure mode

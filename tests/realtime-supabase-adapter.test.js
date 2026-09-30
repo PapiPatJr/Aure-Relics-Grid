@@ -150,6 +150,19 @@ test('mutate propagates a 40001 conflict error unchanged', async () => {
   await assert.rejects(() => adapter.mutate(session, { type: 'session.setRound', payload: {} }), err => err === conflict);
 });
 
+test('mutate propagates the structured PT409 stale conflict unchanged', async () => {
+  const client = createFakeSupabaseClient();
+  const conflict = {
+    code: 'PT409',
+    message: 'Stale revision; hydrate before retrying',
+    details: null,
+    hint: null,
+  };
+  client.setRpcResult(async () => ({ data: null, error: conflict, status: 409, statusText: 'Conflict' }));
+  const adapter = createSupabaseSyncAdapter(client);
+  await assert.rejects(() => adapter.mutate(session, { type: 'session.setRound', payload: {} }), err => err === conflict);
+});
+
 test('the unsubscribe function returned by subscribe is idempotent and removes exactly its own channel', async () => {
   const client = createFakeSupabaseClient();
   const adapter = createSupabaseSyncAdapter(client);

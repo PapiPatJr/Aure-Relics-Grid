@@ -94,9 +94,9 @@ test('a player-shaped backend rejection (42501) is propagated unchanged — the 
   await assert.rejects(() => bridge.setRound(session, 2), err => err === denied);
 });
 
-test('a 40001 conflict re-hydrates exactly once and never replays the mutation', async () => {
+test('a PT409 stale conflict re-hydrates exactly once and never replays the mutation', async () => {
   const { engine, adapter } = await buildReadyEngine('1');
-  const conflict = Object.assign(new Error('stale revision'), { code: '40001' });
+  const conflict = Object.assign(new Error('Stale revision; hydrate before retrying'), { code: 'PT409' });
   adapter.setMutateResult(async () => { throw conflict; });
   const bridge = createMutationBridge(engine);
   const hydrateCallsBefore = adapter.calls.hydrate.length;

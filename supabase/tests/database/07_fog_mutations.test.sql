@@ -90,7 +90,7 @@ select throws_ok(
   $$select mutate_session('0b400000-0000-0000-0000-000000000001',jsonb_build_object(
     'schemaVersion',1,'type','fog.paint','expectedRevision',current_setting('test.stale_fog_revision'),
     'payload',jsonb_build_object('levelId','0b300000-0000-0000-0000-000000000001','mode','reveal','cells','[[2,0]]'::jsonb)))$$,
-  '40001',null,'stale fog mutation is rejected'
+  'PT409','Stale revision; hydrate before retrying','stale fog mutation is rejected'
 );
 reset role;
 select is((select count(*)::int from fog_cells where level_id='0b300000-0000-0000-0000-000000000001' and x=2 and y=0),0,'stale rejection leaves canonical fog unchanged');

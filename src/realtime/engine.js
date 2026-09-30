@@ -16,9 +16,9 @@ function toBigInt(revision) {
   return BigInt(revision);
 }
 
-/** True when `error` is the backend's optimistic-concurrency rejection (SQLSTATE 40001). Narrowly scoped: it only classifies the error, it never decides whether to retry. */
+/** True when `error` is the backend's typed stale-revision rejection (PT409, plus legacy 40001). Narrowly scoped: it only classifies the error, it never decides whether to retry. */
 export function isRevisionConflict(error) {
-  return Boolean(error) && error.code === '40001';
+  return Boolean(error) && (error.code === 'PT409' || error.code === '40001');
 }
 
 /**
@@ -59,7 +59,7 @@ function createSessionContext(id) {
  * and only the backend decides access. It does not gate mutate() on its own cached status — the
  * backend is the only authority. mutate() automatically attaches the current *applied* snapshot
  * revision as `expectedRevision`; an observed-but-not-yet-hydrated invalidation is never used
- * for that, and a rejected (e.g. stale, SQLSTATE 40001) mutation is never auto-replayed.
+ * for that, and a rejected stale mutation (PT409, or legacy 40001) is never auto-replayed.
  *
  * A hydrate() rejection carrying SQLSTATE 42501 (and only that code — see isAccessDeniedError)
  * enters `denied` rather than `error`, exactly like an adapter-pushed denied status: both tear
@@ -244,7 +244,7 @@ export function createSyncEngine(adapter) {
      * Submit a mutation for the currently active session. `expectedRevision` is attached
      * automatically from the current applied snapshot — never from an observed-but-unhydrated
      * invalidation. Rejects structurally if no session is active or no snapshot has been applied
-     * yet; a rejected mutation (including a stale-revision 40001 conflict) is returned as-is and
+     * yet; a rejected mutation (including a stale-revision PT409/legacy-40001 conflict) is returned as-is and
      * is never automatically retried — the caller decides whether to rehydrate and retry.
      * @param {string} targetSession
      * @param {import('./types.js').MutationCommand} command

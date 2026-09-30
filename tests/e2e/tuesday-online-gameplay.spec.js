@@ -316,7 +316,7 @@ test('Tuesday online: stale manager conflicts, rehydrates, and never replays Nex
   });
   const advancedOnce = await snapshotFor(actors, room.dm, room.hosted.session);
 
-  actors.expectHttp(dmB, '/rest/v1/rpc/mutate_session', 500);
+  actors.expectHttp(dmB, '/rest/v1/rpc/mutate_session', 409);
   let afterConflict;
   const rejected = await observeMutationCommands(dmB, async () => {
     await dmB.page.locator('[data-testid="next-turn"]').click();

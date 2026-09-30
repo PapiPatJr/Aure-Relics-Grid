@@ -49,7 +49,7 @@ export function createMutationBridge(engine) {
 
 /**
  * Shared recovery flow for a single mutate() call:
- * - `40001` (stale expectedRevision) or `40P01` (aborted conflicting transaction, per the 8A
+ * - `PT409` (stale expectedRevision), legacy `40001`, or `40P01` (aborted conflicting transaction, per the 8A
  *   contract) both re-hydrate so the caller's next attempt has a fresh applied revision, then
  *   return a conflict result. Neither ever re-attempts the mutation itself — no blind replay,
  *   and an aborted-transaction conflict is never reported as a success.

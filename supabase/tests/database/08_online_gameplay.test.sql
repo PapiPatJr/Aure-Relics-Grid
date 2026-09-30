@@ -67,7 +67,7 @@ select results_eq($$select grid_width,grid_height,theme from levels where campai
 select set_config('test.prepared_level',(select active_level_id::text from sessions where id='0c400000-0000-0000-0000-000000000001'),true);
 set local role authenticated;
 select set_config('request.jwt.claims','{"sub":"0c000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
-select throws_ok($$select mutate_session('0c400000-0000-0000-0000-000000000001',jsonb_build_object('schemaVersion',1,'type','session.prepareBoard','expectedRevision',current_setting('test.prepare_stale'),'payload','{}'::jsonb))$$,'40001',null,'prepare rejects a stale revision');
+select throws_ok($$select mutate_session('0c400000-0000-0000-0000-000000000001',jsonb_build_object('schemaVersion',1,'type','session.prepareBoard','expectedRevision',current_setting('test.prepare_stale'),'payload','{}'::jsonb))$$,'PT409','Stale revision; hydrate before retrying','prepare rejects a stale revision');
 -- True idempotence: a repeat prepare against an already-valid, already-active board must be a
 -- genuine no-op — no new activity entry, and therefore no avoidable revision/invalidation bump.
 select set_config('test.prepare_revision_before',get_session_snapshot('0c400000-0000-0000-0000-000000000001')->>'revision',true);
@@ -205,7 +205,7 @@ select set_config('request.jwt.claims','{"sub":"0c000000-0000-0000-0000-00000000
 select lives_ok($$select mutate_session('0c400000-0000-0000-0000-000000000002',jsonb_build_object('schemaVersion',1,'type','initiative.advance','expectedRevision',get_session_snapshot('0c400000-0000-0000-0000-000000000002')->>'revision','payload','{}'::jsonb))$$,'advance reaches the last entry before wrap');
 select set_config('test.advance_stale',get_session_snapshot('0c400000-0000-0000-0000-000000000002')->>'revision',true);
 select lives_ok($$select mutate_session('0c400000-0000-0000-0000-000000000002',jsonb_build_object('schemaVersion',1,'type','initiative.advance','expectedRevision',current_setting('test.advance_stale'),'payload','{}'::jsonb))$$,'last entry wraps to first atomically');
-select throws_ok($$select mutate_session('0c400000-0000-0000-0000-000000000002',jsonb_build_object('schemaVersion',1,'type','initiative.advance','expectedRevision',current_setting('test.advance_stale'),'payload','{}'::jsonb))$$,'40001',null,'two advances from the same revision cannot both succeed');
+select throws_ok($$select mutate_session('0c400000-0000-0000-0000-000000000002',jsonb_build_object('schemaVersion',1,'type','initiative.advance','expectedRevision',current_setting('test.advance_stale'),'payload','{}'::jsonb))$$,'PT409','Stale revision; hydrate before retrying','two advances from the same revision cannot both succeed');
 reset role;
 select is((select token_id::text from initiative_entries where session_id='0c400000-0000-0000-0000-000000000002' and is_active),'0c600000-0000-0000-0000-000000000001','wrap activates first entry');
 select is((select round_number from session_state where session_id='0c400000-0000-0000-0000-000000000002'),2,'wrap increments round exactly once');

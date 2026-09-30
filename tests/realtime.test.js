@@ -402,10 +402,10 @@ test('mutating an unhydrated session is a structural error, not a manufactured p
   assert.equal(adapter.calls.mutate.length, 0);
 });
 
-test('a stale-revision (40001) mutation rejection is classified but never auto-replayed', async () => {
+test('a stale-revision PT409 mutation rejection is classified but never auto-replayed', async () => {
   const adapter = createFakeAdapter();
   adapter.setHydrateResult(async () => snap('1'));
-  const conflict = Object.assign(new Error('stale revision'), { code: '40001' });
+  const conflict = Object.assign(new Error('Stale revision; hydrate before retrying'), { code: 'PT409' });
   adapter.setMutateResult(async () => { throw conflict; });
   const engine = createSyncEngine(adapter);
   engine.subscribe(session, {});
@@ -415,6 +415,9 @@ test('a stale-revision (40001) mutation rejection is classified but never auto-r
     return true;
   });
   assert.equal(adapter.calls.mutate.length, 1); // the engine itself never retries
+  assert.equal(isRevisionConflict({ code: '40001' }), true); // legacy backend compatibility
+  assert.equal(isRevisionConflict({ code: 'PT410', status: 409 }), false);
+  assert.equal(isRevisionConflict({ status: 409 }), false); // HTTP status alone is never enough
   assert.equal(isRevisionConflict(new Error('unrelated')), false);
   assert.equal(isRevisionConflict(null), false);
 });

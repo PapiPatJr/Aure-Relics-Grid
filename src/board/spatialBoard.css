@@ -68,6 +68,20 @@
   outline: 1px dashed var(--gold, #c9a95c);
 }
 
+/* Package 2C: every token inside the DM's own standalone management stage is click-to-select
+   (script.js's local-only selectedRealtimeTokenId) — scoped to .spatial-board-stage specifically
+   since that stage only ever exists in the DM management board; the shared player-facing renderer
+   (src/board/spatialTokenRenderer.js) instead mounts tokens inside .fog-player-stage, which this
+   rule never matches, so a real Player Screen/Preview token never shows a pointer cursor. */
+.spatial-board-stage .spatial-token {
+  cursor: pointer;
+}
+
+.spatial-token--selected {
+  z-index: 3;
+  outline: 2px solid #fff;
+}
+
 .spatial-token-glyph {
   pointer-events: none;
 }

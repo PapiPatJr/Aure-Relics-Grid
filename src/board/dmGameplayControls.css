@@ -1,0 +1,105 @@
+/*
+ * Tuesday Online Package 2C: DM gameplay authoring controls rendered only on the DM's own
+ * management board (#realtimeSessionPanel, script.js). Layout only — none of this styling is
+ * part of any security boundary; manager-only gating happens in script.js/boardActions.js, not
+ * here.
+ */
+
+.realtime-token-form-details,
+.realtime-initiative-editor-details {
+  margin: 10px 0;
+}
+
+.realtime-token-form-details summary,
+.realtime-initiative-editor-details summary {
+  padding: 8px;
+  background: rgba(201, 169, 92, 0.08);
+  color: var(--gold, #c9a95c);
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid var(--border-dark, #4c3b22);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.realtime-token-form,
+.realtime-initiative-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 8px;
+  background: var(--panel-soft, #241c12);
+  border: 1px solid var(--border-dark, #4c3b22);
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+}
+
+.realtime-token-inspector {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 8px;
+  background: var(--panel-soft, #241c12);
+  border: 1px solid var(--border-dark, #4c3b22);
+  border-radius: 4px;
+}
+
+.realtime-token-form label,
+.realtime-token-move-form,
+.realtime-initiative-row-editor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.realtime-token-form input[type="text"],
+.realtime-token-form input[type="number"],
+.realtime-token-move-form input[type="number"] {
+  width: 64px;
+}
+
+.realtime-form-note {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--gold, #c9a95c);
+  font-size: 11px;
+}
+
+.realtime-token-inspector {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.realtime-initiative-editor {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* One row per manager-visible token (crowded-realtime.spec.js's own fixture has 30) — this must
+   own its own bounded, independently scrollable region exactly like .realtime-token-list/
+   .realtime-character-list/.realtime-initiative-list already do (style.css), or an unbounded
+   editor inflates #realtimeSessionPanel enough to shift the legacy board's own #grid, which is
+   exactly the "list/rail owns its own overflow" regression those rails were already fixed for. */
+.realtime-initiative-editor-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--grid-frame) transparent;
+}
+
+.realtime-initiative-row-editor {
+  padding: 2px 0;
+}
+
+.realtime-initiative-row-editor span {
+  flex: 1 1 auto;
+}

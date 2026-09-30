@@ -2701,6 +2701,19 @@ function sortRealtimeTokensForDisplay(tokens) {
 // scroll into a new one); `lastActiveRealtimeTokenId` gates the existing active-scroll-into-view.
 let realtimeContextKey;
 let lastActiveRealtimeTokenId;
+// Package 2C: which spatial token the DM has clicked to inspect/move/delete. Purely local
+// presentation state — never sent to the backend, never part of any BoardView/snapshot, and
+// reset on teardown/context-switch/deletion exactly like the scroll-restoration watermarks above.
+let selectedRealtimeTokenId;
+// The last view actually applied, kept so a pure local selection change (which is not itself a
+// new snapshot) can still trigger a full rerender through the one existing render path.
+let lastRealtimeView;
+// Every render rebuilds panel.innerHTML from scratch, which would otherwise silently re-collapse
+// the Create Token / Initiative <details> below on every single snapshot (an HP tick, an unrelated
+// token moving) — jarring if the DM had it open mid-task. Explicit local UI state, restored onto
+// each freshly-built <details> element; never sent anywhere, exactly like selectedRealtimeTokenId.
+let realtimeCreateTokenOpen = false;
+let realtimeInitiativeEditorOpen = false;
 
 function realtimeContextKeyFor(view) {
   return `${view.sessionId ?? ""}:${view.session?.activeLevelId ?? ""}`;
@@ -2835,7 +2848,7 @@ function realtimeSpatialAriaLabel(token, isActive, hiddenFromPlayers) {
   return bits.join(", ");
 }
 
-function renderRealtimeSpatialToken(token, boardWidth, boardHeight, isActive) {
+function renderRealtimeSpatialToken(token, boardWidth, boardHeight, isActive, isSelected) {
   if (!token || token.id == null) return null;
   const rect = computeRealtimeSpatialRectPercent(token, boardWidth, boardHeight);
   if (!rect) return null;
@@ -2851,6 +2864,7 @@ function renderRealtimeSpatialToken(token, boardWidth, boardHeight, isActive) {
   if (REALTIME_SPATIAL_KIND_MODIFIERS.has(token.kind)) el.classList.add(`spatial-token--${token.kind}`);
   if (isActive) el.classList.add("spatial-token--active");
   if (hiddenFromPlayers) el.classList.add("spatial-token--hidden");
+  if (isSelected) el.classList.add("spatial-token--selected");
 
   el.style.left = `${rect.leftPct}%`;
   el.style.top = `${rect.topPct}%`;
@@ -2876,6 +2890,17 @@ function renderRealtimeSpatialToken(token, boardWidth, boardHeight, isActive) {
   el.dataset.tokenWidth = String(token.width);
   el.dataset.tokenHeight = String(token.height);
 
+  // Selection is local-only UI state (Package 2C): this listener never mutates, never touches
+  // the engine/bridge, and never leaves this file — it only toggles which token the inspector
+  // below (renderRealtimeTokenInspector) describes, then rerenders from the last real snapshot.
+  // Safe to attach unconditionally: this function is the DM management board's own twin and is
+  // never used to build a Player Screen or DM Preview token (those go through the shared,
+  // presentation-only src/board/spatialTokenRenderer.js instead).
+  el.addEventListener("click", () => {
+    selectedRealtimeTokenId = selectedRealtimeTokenId === token.id ? undefined : token.id;
+    if (lastRealtimeView) applyRealtimeSnapshot(lastRealtimeView);
+  });
+
   return el;
 }
 
@@ -2894,7 +2919,11 @@ function buildRealtimeSpatialBoardStage(width, height, tokens, activeTokenId) {
   const layer = document.createElement("div");
   layer.className = "spatial-token-layer";
   (tokens || []).forEach(token => {
-    const el = renderRealtimeSpatialToken(token, width, height, token?.id != null && token.id === activeTokenId);
+    const el = renderRealtimeSpatialToken(
+      token, width, height,
+      token?.id != null && token.id === activeTokenId,
+      token?.id != null && token.id === selectedRealtimeTokenId
+    );
     if (el) layer.appendChild(el);
   });
   stage.appendChild(layer);
@@ -2903,11 +2932,220 @@ function buildRealtimeSpatialBoardStage(width, height, tokens, activeTokenId) {
 }
 
 /**
+ * Package 2C: compact DM-only token creation form. `characterId` is only meaningful (and only
+ * sent — see src/realtime/boardActions.js) for kind:'player'; the select is hidden, not removed,
+ * when another kind is chosen, so switching back to 'player' keeps the user's prior choice.
+ * Approved characters that already have a token on the active level are excluded — the backend
+ * enforces one-token-per-character-per-level as the real authority (Invalid/Duplicate player
+ * token, 22023), but offering an already-taken character here would just guarantee that failure.
+ */
+function renderRealtimeCreateTokenForm(view) {
+  const form = document.createElement("form");
+  form.className = "realtime-token-form";
+  form.dataset.realtimeAction = "create-token";
+  form.dataset.testid = "create-token";
+
+  const kindLabel = document.createElement("label");
+  kindLabel.textContent = "Kind ";
+  const kindSelect = document.createElement("select");
+  kindSelect.name = "kind";
+  [["enemy", "Enemy"], ["npc", "NPC"], ["boss", "Boss"], ["player", "Player"]].forEach(([value, text]) => {
+    const option = document.createElement("option");
+    option.value = value; option.textContent = text;
+    kindSelect.appendChild(option);
+  });
+  kindLabel.appendChild(kindSelect);
+  form.appendChild(kindLabel);
+
+  const characterLabel = document.createElement("label");
+  characterLabel.textContent = "Character ";
+  const characterSelect = document.createElement("select");
+  characterSelect.name = "characterId";
+  const tokenedCharacterIds = new Set((view.tokens || []).map(t => t.characterId).filter(Boolean));
+  const availableCharacters = (view.characters || []).filter(c => c.approved && !tokenedCharacterIds.has(c.id));
+  availableCharacters.forEach(character => {
+    const option = document.createElement("option");
+    option.value = character.id; option.textContent = character.name;
+    characterSelect.appendChild(option);
+  });
+  characterLabel.appendChild(characterSelect);
+  form.appendChild(characterLabel);
+
+  const syncCharacterVisibility = () => { characterLabel.hidden = kindSelect.value !== "player"; };
+  kindSelect.addEventListener("change", syncCharacterVisibility);
+  syncCharacterVisibility();
+
+  if (availableCharacters.length === 0) {
+    const note = document.createElement("p");
+    note.className = "realtime-form-note";
+    note.textContent = "All approved characters already have a token on this board.";
+    form.appendChild(note);
+  }
+
+  const labelInput = document.createElement("input");
+  labelInput.type = "text"; labelInput.name = "label";
+  labelInput.placeholder = "Label"; labelInput.required = true; labelInput.maxLength = 200;
+  labelInput.setAttribute("aria-label", "Token label");
+  form.appendChild(labelInput);
+
+  const xInput = document.createElement("input");
+  xInput.type = "number"; xInput.name = "x"; xInput.min = "0"; xInput.required = true;
+  xInput.setAttribute("aria-label", "X coordinate");
+  form.appendChild(xInput);
+
+  const yInput = document.createElement("input");
+  yInput.type = "number"; yInput.name = "y"; yInput.min = "0"; yInput.required = true;
+  yInput.setAttribute("aria-label", "Y coordinate");
+  form.appendChild(yInput);
+
+  const visibleLabel = document.createElement("label");
+  const visibleInput = document.createElement("input");
+  visibleInput.type = "checkbox"; visibleInput.name = "isVisible";
+  visibleLabel.append(visibleInput, document.createTextNode(" Visible to players"));
+  form.appendChild(visibleLabel);
+
+  const submitButton = document.createElement("button");
+  submitButton.type = "submit";
+  submitButton.className = "realtime-action-button";
+  submitButton.dataset.testid = "token-create-submit";
+  submitButton.textContent = "Create token";
+  form.appendChild(submitButton);
+
+  // Collapsed by default: an always-open form (plus the initiative editor below) was tall enough
+  // to push #realtimeSessionPanel's total content past .right-panel's own viewport-bounded height
+  // in a crowded encounter, which made bringing an internal list into view (Playwright's own
+  // scrollIntoView, but the same native browser behavior a real DM's own scrolling could trigger)
+  // scroll the whole document instead of staying contained — exactly the regression
+  // crowded-realtime.spec.js's "body and the map never move" step exists to catch. Collapsing
+  // both by default keeps the common case (board already has its tokens) small; data-testid stays
+  // on the <form> itself so nothing about the production contract for 2D changes.
+  const details = document.createElement("details");
+  details.className = "realtime-token-form-details";
+  details.open = realtimeCreateTokenOpen;
+  details.addEventListener("toggle", () => { realtimeCreateTokenOpen = details.open; });
+  const summary = document.createElement("summary");
+  summary.textContent = "Create token";
+  summary.dataset.testid = "create-token-toggle";
+  details.append(summary, form);
+  return details;
+}
+
+/**
+ * Package 2C: the selected token's inspector — the bounded move/delete affordance instead of a
+ * permanent control on every board token. Tuesday minimum uses X/Y destination fields rather than
+ * pointer drag (see the build report for the tradeoff); moving reads these two plain inputs at
+ * click time (src/realtime/boardActions.js's 'move-token' handling), never on every keystroke.
+ */
+function renderRealtimeTokenInspector(view) {
+  if (!selectedRealtimeTokenId) return null;
+  const token = (view.tokens || []).find(t => t.id === selectedRealtimeTokenId);
+  if (!token) return null;
+
+  const inspector = document.createElement("div");
+  inspector.className = "realtime-token-inspector";
+  inspector.dataset.testid = "token-inspector";
+
+  const heading = document.createElement("p");
+  heading.textContent = `Selected: ${token.label ?? ""} (${token.kind ?? ""})`;
+  inspector.appendChild(heading);
+
+  const moveForm = document.createElement("div");
+  moveForm.className = "realtime-token-move-form";
+  moveForm.dataset.tokenMoveForm = "";
+  moveForm.dataset.tokenId = token.id;
+
+  const xInput = document.createElement("input");
+  xInput.type = "number"; xInput.dataset.moveX = ""; xInput.value = String(token.x);
+  xInput.setAttribute("aria-label", "Move to X");
+  const yInput = document.createElement("input");
+  yInput.type = "number"; yInput.dataset.moveY = ""; yInput.value = String(token.y);
+  yInput.setAttribute("aria-label", "Move to Y");
+  const moveButton = createRealtimeActionButton("move-token", "Move", { tokenId: token.id, testid: "move-token" });
+  moveForm.append(xInput, yInput, moveButton);
+  inspector.appendChild(moveForm);
+
+  inspector.appendChild(createRealtimeActionButton("delete-token", "Delete token", { tokenId: token.id, testid: "delete-token" }));
+
+  return inspector;
+}
+
+/**
+ * Package 2C: author/replace the full initiative order from the current manager-visible token
+ * pool, through the existing initiative.set command (never a new backend API). A token already
+ * in view.initiative starts checked with its current value; src/realtime/boardActions.js's
+ * 'submit-initiative' handling preserves whichever entry is already active (if still included)
+ * rather than resetting an in-progress encounter on every roster edit.
+ */
+function renderRealtimeInitiativeEditor(view) {
+  const tokens = view.tokens || [];
+  if (tokens.length === 0) return null;
+
+  const currentByTokenId = new Map((view.initiative || []).map(entry => [entry.tokenId, entry]));
+
+  const form = document.createElement("form");
+  form.className = "realtime-initiative-editor";
+  form.dataset.realtimeAction = "submit-initiative";
+  form.dataset.testid = "initiative-editor";
+
+  // Its own bounded, independently scrollable region — same "list/rail owns its own overflow"
+  // principle as .realtime-token-list/.realtime-character-list/.realtime-initiative-list above,
+  // needed here too since this list is one row per manager-visible token (a crowded encounter's
+  // roster can be dozens deep, exactly like crowded-realtime.spec.js's own 30-opponent fixture).
+  const rows = document.createElement("div");
+  rows.className = "realtime-initiative-editor-rows";
+
+  sortRealtimeTokensForDisplay(tokens).forEach(token => {
+    const current = currentByTokenId.get(token.id);
+    const row = document.createElement("label");
+    row.className = "realtime-initiative-row-editor";
+    row.dataset.initiativeRow = "";
+    row.dataset.tokenId = token.id;
+
+    const includeInput = document.createElement("input");
+    includeInput.type = "checkbox";
+    includeInput.dataset.initiativeInclude = "";
+    includeInput.checked = Boolean(current);
+
+    const label = document.createElement("span");
+    label.textContent = ` ${token.label ?? ""} (${token.kind ?? ""}) `;
+
+    const valueInput = document.createElement("input");
+    valueInput.type = "number";
+    valueInput.dataset.initiativeValue = "";
+    valueInput.value = String(current?.initiative ?? 0);
+    valueInput.setAttribute("aria-label", `Initiative for ${token.label ?? "token"}`);
+
+    row.append(includeInput, label, valueInput);
+    rows.appendChild(row);
+  });
+  form.appendChild(rows);
+
+  const submitButton = document.createElement("button");
+  submitButton.type = "submit";
+  submitButton.className = "realtime-action-button";
+  submitButton.dataset.testid = "initiative-submit";
+  submitButton.textContent = "Set initiative";
+  form.appendChild(submitButton);
+
+  // Collapsed by default — see renderRealtimeCreateTokenForm's comment for why.
+  const details = document.createElement("details");
+  details.className = "realtime-initiative-editor-details";
+  details.open = realtimeInitiativeEditorOpen;
+  details.addEventListener("toggle", () => { realtimeInitiativeEditorOpen = details.open; });
+  const summary = document.createElement("summary");
+  summary.textContent = "Initiative";
+  summary.dataset.testid = "initiative-editor-toggle";
+  details.append(summary, form);
+  return details;
+}
+
+/**
  * Render a src/realtime/boardBridge.js BoardView (or null/undefined to hide/clear). Called by
  * src/realtime/** integration code; never called from any local/offline code path above.
  */
 function applyRealtimeSnapshot(view) {
   const panel = getRealtimeSessionPanel();
+  lastRealtimeView = view;
 
   if (!view) {
     panel.hidden = true;
@@ -2916,11 +3154,19 @@ function applyRealtimeSnapshot(view) {
     // next, so its old scroll/active context must never leak forward into that.
     realtimeContextKey = undefined;
     lastActiveRealtimeTokenId = undefined;
+    selectedRealtimeTokenId = undefined;
     return;
   }
 
   const contextKey = realtimeContextKeyFor(view);
   const sameContext = realtimeContextKey === contextKey;
+  // A local selection only makes sense for the same logical view it was made on — never carried
+  // across a session/level switch, and never left pointing at a token a newer snapshot no longer
+  // has (e.g. this DM's own token.delete already succeeded).
+  if (!sameContext) selectedRealtimeTokenId = undefined;
+  if (selectedRealtimeTokenId && !(view.tokens || []).some(t => t.id === selectedRealtimeTokenId)) {
+    selectedRealtimeTokenId = undefined;
+  }
   // Restoring a manual scroll offset only makes sense across a rerender of the SAME logical view
   // (same session, same active level) — never across a genuinely different context, where the
   // old encounter's scroll position has nothing to do with the new one.
@@ -2934,11 +3180,21 @@ function applyRealtimeSnapshot(view) {
   heading.textContent = `Online session — Round ${view.roundNumber ?? "—"}`;
   panel.appendChild(heading);
 
+  // Package 2C: no active level yet — the only thing a manager can do is prepare one. Hidden
+  // (never disabled) once view.fog is present, which is also backend-idempotent to click again.
+  if (view.dm && !view.fog) {
+    panel.appendChild(createRealtimeActionButton("prepare-board", "Prepare Board", { testid: "prepare-board" }));
+  }
+
   if (view.authority?.canManage) {
     panel.appendChild(createRealtimeActionButton("advance-round", "Advance round"));
   }
 
   const activeTokenId = (view.initiative || []).find(entry => entry.isActive)?.tokenId;
+
+  if (view.dm && (view.initiative || []).length > 0) {
+    panel.appendChild(createRealtimeActionButton("next-turn", "Next Turn", { testid: "next-turn" }));
+  }
 
   // Package 2B: every manager-authorized token spatially placed on the active level's grid,
   // hidden ones distinguished (never omitted) — gated on view.dm exactly like the DM-only
@@ -2946,6 +3202,11 @@ function applyRealtimeSnapshot(view) {
   if (view.dm && view.fog) {
     const spatialStage = buildRealtimeSpatialBoardStage(view.fog.width, view.fog.height, view.tokens, activeTokenId);
     if (spatialStage) panel.appendChild(spatialStage);
+    // Package 2C: token creation and the selected-token move/delete inspector — both need an
+    // active level exactly like the spatial board itself does.
+    panel.appendChild(renderRealtimeCreateTokenForm(view));
+    const inspector = renderRealtimeTokenInspector(view);
+    if (inspector) panel.appendChild(inspector);
   }
 
   if ((view.tokens || []).length > 0) {
@@ -2976,6 +3237,11 @@ function applyRealtimeSnapshot(view) {
   initiativeList.className = "realtime-initiative-list";
   (view.initiative || []).forEach(entry => initiativeList.appendChild(renderRealtimeInitiativeRow(entry)));
   panel.appendChild(initiativeList);
+
+  if (view.dm) {
+    const initiativeEditor = renderRealtimeInitiativeEditor(view);
+    if (initiativeEditor) panel.appendChild(initiativeEditor);
+  }
 
   if (view.dm) {
     const dmSection = document.createElement("section");

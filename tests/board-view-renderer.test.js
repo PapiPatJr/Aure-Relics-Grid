@@ -427,3 +427,30 @@ test('malformed token geometry is skipped rather than placed at a guessed positi
   renderBoardView(container, playerShapedView({ fog, tokens: [{ id: 'malformed', kind: 'enemy', label: 'Bad', isVisible: true }] }), { presentationMode: 'player' });
   assert.equal(container.querySelector('[data-spatial-token-id="malformed"]'), null);
 });
+
+// --- Tuesday Online Package 2C: this shared renderer never grows DM authoring controls of its
+// own — every 2C control (Prepare Board, Create Token, the move/delete inspector, the initiative
+// editor, Next Turn) is script.js's own DM management board only. Defense-in-depth: even a
+// DM-shaped view rendered as presentationMode 'player' (the real Player Screen / DM Preview path)
+// must never produce one of these, matching the existing adversarial-input tests above. ---
+
+test('presentationMode "player" (Player Screen / DM Preview) never renders any Package 2C DM authoring control, even given a manager-shaped, fully-populated view', () => {
+  const { container } = makeContainer();
+  const view = dmShapedView({
+    fog: fogFixture(),
+    tokens: [spatialToken()],
+    characters: [{ id: 'c1', name: 'Aria', playerName: 'Pat', hp: 9, maxHp: 12, ac: 15, statuses: [], approved: true }],
+    initiative: [{ id: 'i1', tokenId: 'st1', initiative: 10, position: 0, isActive: true }],
+  });
+  for (const interactionMode of ['interactive', 'readOnly']) {
+    renderBoardView(container, view, { presentationMode: 'player', interactionMode });
+    for (const testid of ['prepare-board', 'create-token', 'token-inspector', 'initiative-editor', 'next-turn']) {
+      assert.equal(container.querySelector(`[data-testid="${testid}"]`), null, testid);
+    }
+    for (const action of ['prepare-board', 'move-token', 'delete-token', 'next-turn']) {
+      assert.equal(container.querySelector(`[data-realtime-action="${action}"]`), null, action);
+    }
+    assert.equal(container.querySelector('form[data-realtime-action="submit-initiative"]'), null);
+    assert.equal(container.querySelector('.spatial-board-stage'), null, 'the DM-only standalone stage never renders here either');
+  }
+});

@@ -5,6 +5,7 @@ import './entry/entry.css';
 import './characters/characters.css';
 import './fog/fog.css';
 import './board/spatialBoard.css';
+import './board/dmGameplayControls.css';
 
 async function start() {
   try {

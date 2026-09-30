@@ -480,3 +480,223 @@ for (const { name, board, token, wholeBoardInvalid } of INVALID_GEOMETRY_CASES) 
     }
   });
 }
+
+// --- Tuesday Online Package 2C: DM gameplay controls rendered on #realtimeSessionPanel ---
+
+function gameplayFog(overrides = {}) {
+  return { levelId: 'level-1', width: 20, height: 20, enabled: true, revealedRuns: [], ...overrides };
+}
+
+function gameplayManagerView(overrides = {}) {
+  return createBoardView(baseSnapshot({
+    authority: { canManage: true, ownCharacterId: null },
+    dm: { tokenDetails: [], notes: [], activity: [] },
+    fog: gameplayFog(),
+    tokens: [
+      { id: 't1', kind: 'enemy', label: 'Goblin', x: 2, y: 3, width: 1, height: 1, isVisible: true, characterId: null },
+      { id: 't2', kind: 'player', label: 'Aria', x: 0, y: 0, width: 1, height: 1, isVisible: true, characterId: 'c1' },
+    ],
+    characters: [{ id: 'c1', name: 'Aria', approved: true }, { id: 'c2', name: 'Beorn', approved: true }],
+    initiative: [{ id: 'i1', tokenId: 't1', initiative: 10, position: 0, isActive: true }],
+    ...overrides,
+  }));
+}
+
+test('Prepare Board: shown for a manager with no active level, hidden once the board is prepared', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView({ fog: null, tokens: [] }));
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    assert.ok(panel.querySelector('[data-testid="prepare-board"]'));
+
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView());
+    assert.equal(panel.querySelector('[data-testid="prepare-board"]'), null);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('Prepare Board: never shown for a non-manager view', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    window.aureRelicsApplyRealtimeSnapshot(createBoardView(baseSnapshot({ authority: { canManage: false, ownCharacterId: null }, dm: null, fog: null })));
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    assert.equal(panel.querySelector('[data-testid="prepare-board"]'), null);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('Create Token: the form is rendered once a board exists, with kind/label/x/y/visibility fields', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView());
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    const form = panel.querySelector('[data-testid="create-token"]');
+    assert.ok(form);
+    assert.equal(form.tagName, 'FORM');
+    assert.ok(form.elements.namedItem('kind'));
+    assert.ok(form.elements.namedItem('label'));
+    assert.ok(form.elements.namedItem('x'));
+    assert.ok(form.elements.namedItem('y'));
+    assert.ok(form.elements.namedItem('isVisible'));
+    assert.ok(form.querySelector('[data-testid="token-create-submit"]'));
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('Create Token: no form is rendered before the board is prepared (no active level to create onto)', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView({ fog: null, tokens: [] }));
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    assert.equal(panel.querySelector('[data-testid="create-token"]'), null);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('Create Token: the player-character select excludes a character that already has a token on the active level', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    // c1 already owns t2; c2 has no token yet.
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView());
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    const characterSelect = panel.querySelector('[data-testid="create-token"] [name="characterId"]');
+    assert.ok(characterSelect);
+    const optionValues = Array.from(characterSelect.options).map(o => o.value);
+    assert.ok(!optionValues.includes('c1'), 'c1 already has a token and must not be offered again');
+    assert.ok(optionValues.includes('c2'));
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('Token selection: clicking a spatial token in the DM board selects it and shows the inspector prefilled with its position; clicking again deselects it', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView());
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    assert.equal(panel.querySelector('[data-testid="token-inspector"]'), null);
+
+    const tokenEl = panel.querySelector('[data-spatial-token-id="t1"]');
+    tokenEl.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+    const inspector = panel.querySelector('[data-testid="token-inspector"]');
+    assert.ok(inspector);
+    assert.equal(inspector.querySelector('[data-move-x]').value, '2');
+    assert.equal(inspector.querySelector('[data-move-y]').value, '3');
+    assert.ok(inspector.querySelector('[data-realtime-action="move-token"][data-token-id="t1"]'));
+    assert.ok(inspector.querySelector('[data-realtime-action="delete-token"][data-token-id="t1"]'));
+
+    // Clicking the same token again toggles selection off.
+    panel.querySelector('[data-spatial-token-id="t1"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    assert.equal(panel.querySelector('[data-testid="token-inspector"]'), null);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('Token selection: selecting a different token switches the inspector to it', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView());
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    panel.querySelector('[data-spatial-token-id="t1"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    panel.querySelector('[data-spatial-token-id="t2"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    const inspector = panel.querySelector('[data-testid="token-inspector"]');
+    assert.ok(inspector.querySelector('[data-realtime-action="move-token"][data-token-id="t2"]'));
+    assert.equal(inspector.querySelectorAll('[data-realtime-action="move-token"]').length, 1);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('Token selection is local UI state only: it never appears in the rendered view data and clears itself once the selected token is no longer in the snapshot', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView());
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    panel.querySelector('[data-spatial-token-id="t1"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    assert.ok(panel.querySelector('[data-testid="token-inspector"]'));
+
+    // A newer snapshot in which t1 was deleted — the stale selection must not resurrect a
+    // deleted token's inspector.
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView({ tokens: [{ id: 't2', kind: 'player', label: 'Aria', x: 0, y: 0, width: 1, height: 1, isVisible: true, characterId: 'c1' }] }));
+    assert.equal(panel.querySelector('[data-testid="token-inspector"]'), null);
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('Initiative editor: lists every manager-visible token, pre-checked and pre-filled for tokens already in the initiative order', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView());
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    const editor = panel.querySelector('[data-testid="initiative-editor"]');
+    assert.ok(editor);
+    const rows = editor.querySelectorAll('[data-initiative-row]');
+    assert.equal(rows.length, 2);
+
+    const t1Row = editor.querySelector('[data-initiative-row][data-token-id="t1"]');
+    assert.equal(t1Row.querySelector('[data-initiative-include]').checked, true);
+    assert.equal(t1Row.querySelector('[data-initiative-value]').value, '10');
+
+    const t2Row = editor.querySelector('[data-initiative-row][data-token-id="t2"]');
+    assert.equal(t2Row.querySelector('[data-initiative-include]').checked, false);
+
+    assert.ok(editor.querySelector('[data-testid="initiative-submit"]'));
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('Next Turn: shown once an initiative order exists, absent when it is empty', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView({ initiative: [] }));
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    assert.equal(panel.querySelector('[data-testid="next-turn"]'), null);
+
+    window.aureRelicsApplyRealtimeSnapshot(gameplayManagerView());
+    assert.ok(panel.querySelector('[data-testid="next-turn"]'));
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('Authority: none of the new 2C DM controls render for a non-manager view', () => {
+  const dom = bootLegacyBoardDom();
+  try {
+    const { window } = dom;
+    window.aureRelicsApplyRealtimeSnapshot(createBoardView(baseSnapshot({
+      authority: { canManage: false, ownCharacterId: null },
+      dm: null,
+      fog: gameplayFog(),
+      tokens: [{ id: 't1', kind: 'enemy', label: 'Goblin', x: 2, y: 3, width: 1, height: 1, isVisible: true, characterId: null }],
+      initiative: [{ id: 'i1', tokenId: 't1', initiative: 10, position: 0, isActive: true }],
+    })));
+    const panel = window.document.getElementById('realtimeSessionPanel');
+    for (const testid of ['prepare-board', 'create-token', 'initiative-editor', 'next-turn', 'token-inspector']) {
+      assert.equal(panel.querySelector(`[data-testid="${testid}"]`), null, testid);
+    }
+    // Even a click on a rendered (player-facing) spatial token must never select/expose DM controls.
+    const tokenEl = panel.querySelector('[data-spatial-token-id="t1"]');
+    tokenEl?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    assert.equal(panel.querySelector('[data-testid="token-inspector"]'), null);
+  } finally {
+    dom.window.close();
+  }
+});

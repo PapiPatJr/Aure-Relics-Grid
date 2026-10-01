@@ -17,6 +17,8 @@
     "test:entry-api": "node scripts/test-entry-api.mjs",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
+    "test:v2": "node --test tests/workspace-v2-*.test.js",
+    "test:e2e:v2": "playwright test tests/e2e/workspace-v2.spec.js",
     "db:start": "supabase start",
     "db:reset": "supabase db reset --local"
   },

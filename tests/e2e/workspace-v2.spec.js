@@ -128,7 +128,7 @@ test('two-touch pinch zooms while a released one-finger gesture stays reserved f
   await dispatch('pointerup', 3, left + 90, y + 40);
 });
 
-test('Fog panel can dropdown, dock, float, minimize, restore, and close without losing the board', async ({ page }) => {
+test('Fog panel can dropdown, dock, float, minimize, restore, and close without losing the board', async ({ page, viewport }) => {
   const board = page.locator('.workspace-v2-canvas');
   const initialWidth = (await board.boundingBox()).width;
   await page.getByRole('navigation', { name: 'Workspace tools' }).getByRole('button', { name: 'Fog', exact: true }).click();
@@ -138,7 +138,11 @@ test('Fog panel can dropdown, dock, float, minimize, restore, and close without 
   await panel.getByRole('button', { name: 'Dock left' }).click();
   await expect(panel).toHaveAttribute('data-panel-mode', 'dock-left');
   await expect(board).toBeVisible();
-  await expect.poll(async () => (await board.boundingBox()).width).toBeLessThan(initialWidth);
+  if (viewport.width > 1100) {
+    await expect.poll(async () => (await board.boundingBox()).width).toBeLessThan(initialWidth);
+  } else {
+    await expect.poll(async () => (await board.boundingBox()).width).toBeGreaterThanOrEqual(initialWidth - 1);
+  }
 
   await panel.getByRole('button', { name: 'Float panel' }).click();
   await expect(panel).toHaveAttribute('data-panel-mode', 'floating');
@@ -169,6 +173,67 @@ test('quick-tool menu drags, collapses, expands, and activates Pan', async ({ pa
   await pan.click();
   await expect(pan).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.workspace-v2-canvas')).toHaveAttribute('data-hand-mode', 'true');
+});
+
+test('responsive matrix keeps canvas, panels, radial menu, and world tokens usable', async ({ page, viewport }) => {
+  test.skip(viewport.width < 800, 'five-size responsive matrix runs once');
+  const sizes = [
+    { width: 1440, height: 900, mode: 'desktop' },
+    { width: 1024, height: 768, mode: 'overlay' },
+    { width: 768, height: 1024, mode: 'overlay' },
+    { width: 844, height: 390, mode: 'overlay' },
+    { width: 390, height: 844, mode: 'overlay' },
+  ];
+  const expectedTools = ['Party', 'Encounter', 'Tokens', 'Terrain', 'Map', 'Fog', 'Measure', 'Notes', 'Session', 'View'];
+  const navigation = page.getByRole('navigation', { name: 'Workspace tools' });
+  await expect(navigation.getByRole('button')).toHaveText(expectedTools);
+  const board = page.locator('.workspace-v2-canvas');
+  const tokenWorldPosition = await board.evaluate(element => {
+    const tokens = JSON.parse(element.dataset.sceneTokens || '[]');
+    return tokens.find(token => token.id === 'demo-hero');
+  });
+
+  const center = page.getByRole('button', { name: 'Toggle quick tools' });
+  const centerBox = await center.boundingBox();
+  await drag(page,
+    { x: centerBox.x + centerBox.width / 2, y: centerBox.y + centerBox.height / 2 },
+    { x: 1380, y: 840 });
+
+  for (const size of sizes) {
+    await page.setViewportSize({ width: size.width, height: size.height });
+    await expect(board).toBeVisible();
+    const boardBox = await board.boundingBox();
+    expect(boardBox.width).toBeGreaterThan(250);
+    expect(boardBox.height).toBeGreaterThan(250);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+    const radialBox = await page.getByRole('toolbar', { name: 'Quick tools' }).boundingBox();
+    expect(radialBox.x).toBeGreaterThanOrEqual(0);
+    expect(radialBox.x + radialBox.width).toBeLessThanOrEqual(size.width);
+    expect(radialBox.y).toBeGreaterThanOrEqual(52);
+    expect(radialBox.y + radialBox.height).toBeLessThanOrEqual(size.height);
+
+    await navigation.getByRole('button', { name: 'Fog', exact: true }).click();
+    let panel = page.getByRole('complementary', { name: 'Fog panel' });
+    await panel.getByRole('button', { name: 'Dock left' }).click();
+    await expect(panel).toHaveAttribute('data-panel-mode', 'dock-left');
+    if (size.mode === 'desktop') {
+      await expect.poll(async () => (await board.boundingBox()).width).toBeLessThan(size.width - 200);
+    } else {
+      await expect.poll(async () => (await board.boundingBox()).width).toBeGreaterThanOrEqual(size.width - 1);
+      expect(await panel.evaluate(element => getComputedStyle(element.parentElement).position)).toBe('absolute');
+    }
+    await expect(board).toBeVisible();
+    await panel.getByRole('button', { name: 'Close panel' }).click();
+    await expect(panel).toHaveCount(0);
+
+    expect(await board.evaluate((element, expected) => {
+      const tokens = JSON.parse(element.dataset.sceneTokens || '[]');
+      const token = tokens.find(item => item.id === expected.id);
+      return token?.x === expected.x && token?.y === expected.y;
+    }, tokenWorldPosition)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
 });
 
 test.describe('local-stack V2 realtime', () => {

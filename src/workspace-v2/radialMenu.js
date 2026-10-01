@@ -144,6 +144,12 @@ export function mountRadialMenu({ root, tools, activeTool, onSelect = () => {} }
   center.addEventListener('pointermove', handlePointerMove);
   center.addEventListener('pointerup', handlePointerUp);
   center.addEventListener('pointercancel', handlePointerUp);
+  const handleResize = () => setPosition(position);
+  element.ownerDocument.defaultView.addEventListener('resize', handleResize);
+  const resizeObserver = typeof element.ownerDocument.defaultView.ResizeObserver === 'function'
+    ? new element.ownerDocument.defaultView.ResizeObserver(handleResize)
+    : null;
+  resizeObserver?.observe(root);
   renderSelection();
   renderCollapsed();
   setPosition(position);
@@ -159,6 +165,8 @@ export function mountRadialMenu({ root, tools, activeTool, onSelect = () => {} }
       center.removeEventListener('pointermove', handlePointerMove);
       center.removeEventListener('pointerup', handlePointerUp);
       center.removeEventListener('pointercancel', handlePointerUp);
+      element.ownerDocument.defaultView.removeEventListener('resize', handleResize);
+      resizeObserver?.disconnect();
       element.remove();
     },
   };

@@ -151,6 +151,7 @@ body,
 
 .workspace-v2-canvas {
   position: relative;
+  grid-column: 2;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -173,10 +174,12 @@ body,
 }
 
 .workspace-v2-dock--left {
+  grid-column: 1;
   border-right: 1px solid #353d49;
 }
 
 .workspace-v2-dock--right {
+  grid-column: 3;
   border-left: 1px solid #353d49;
 }
 
@@ -406,4 +409,88 @@ body,
   border-color: #a44e4b;
   background: rgb(67 31 32 / 96%);
   color: #ffd4d1;
+}
+
+@media (max-width: 1100px) {
+  .workspace-v2-topbar {
+    gap: 0.35rem;
+    padding-inline: 0.35rem;
+  }
+
+  .workspace-v2-brand {
+    font-size: 0.8rem;
+  }
+
+  .workspace-v2-tools button {
+    padding-inline: 0.5rem;
+    font-size: 0.76rem;
+  }
+
+  .workspace-v2-shell.has-left-dock .workspace-v2-body,
+  .workspace-v2-shell.has-right-dock .workspace-v2-body,
+  .workspace-v2-shell.has-left-dock.has-right-dock .workspace-v2-body {
+    grid-template-columns: 0 minmax(0, 1fr) 0;
+  }
+
+  .workspace-v2-dock {
+    position: absolute;
+    z-index: 32;
+    top: 0;
+    bottom: 0;
+    display: none;
+    width: min(22rem, 88vw);
+    border: 0;
+    box-shadow: 0 18px 54px rgb(0 0 0 / 48%);
+  }
+
+  .workspace-v2-shell.has-left-dock .workspace-v2-dock--left {
+    left: 0;
+    display: block;
+    border-right: 1px solid #414b58;
+  }
+
+  .workspace-v2-shell.has-right-dock .workspace-v2-dock--right {
+    right: 0;
+    display: block;
+    border-left: 1px solid #414b58;
+  }
+}
+
+@media (max-width: 600px) {
+  .workspace-v2-brand {
+    width: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .workspace-v2-dock {
+    top: auto;
+    width: 100%;
+    height: min(78vh, 100%);
+    border-top: 1px solid #414b58;
+  }
+
+  .workspace-panel--dropdown,
+  .workspace-panel--floating {
+    top: auto !important;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    left: 0.5rem !important;
+    width: auto;
+    max-height: calc(100% - 1rem);
+    transform: none;
+  }
+
+  .workspace-v2-camera-controls {
+    right: 0.5rem;
+    bottom: 0.5rem;
+  }
+
+  .workspace-v2-camera-controls button {
+    min-width: 2rem;
+    min-height: 2rem;
+    padding-inline: 0.45rem;
+    font-size: 0.75rem;
+  }
 }

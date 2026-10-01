@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures.js';
+import { createMultiplayerSession } from './realtime-harness.js';
 
 async function readCamera(page) {
   return page.locator('.workspace-v2-canvas').evaluate(element => ({
@@ -168,4 +169,56 @@ test('quick-tool menu drags, collapses, expands, and activates Pan', async ({ pa
   await pan.click();
   await expect(pan).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.workspace-v2-canvas')).toHaveAttribute('data-hand-mode', 'true');
+});
+
+test.describe('local-stack V2 realtime', () => {
+  test.skip(process.env.AURE_V2_E2E === '1', 'requires the isolated local Supabase stack');
+  test.skip(({ viewport }) => viewport.width < 800, 'local-stack realtime coverage runs once on desktop');
+
+  test('authorized session renders and moves a realtime token without reloading V2', async ({ actors }) => {
+  const room = await createMultiplayerSession(actors);
+  await room.dm.page.goto(`/#board/${room.hosted.session}`);
+  const panel = room.dm.page.locator('#realtimeSessionPanel');
+  await expect(panel).toBeVisible();
+  const prepare = panel.locator('[data-testid="prepare-board"]');
+  if (await prepare.isVisible()) await prepare.click();
+  await expect(panel.locator('.spatial-board-stage')).toBeVisible({ timeout: 20_000 });
+
+  await panel.locator('[data-testid="create-token-toggle"]').click();
+  const form = panel.locator('[data-testid="create-token"]');
+  await form.locator('[name="kind"]').selectOption('enemy');
+  await form.locator('[name="label"]').fill('V2 Goblin');
+  await form.locator('[name="x"]').fill('5');
+  await form.locator('[name="y"]').fill('6');
+  await form.locator('[name="isVisible"]').check();
+  await form.locator('[data-testid="token-create-submit"]').click();
+  const legacyToken = panel.locator('.spatial-token[data-token-x="5"][data-token-y="6"]');
+  await expect(legacyToken).toBeVisible({ timeout: 20_000 });
+  const tokenId = await legacyToken.getAttribute('data-spatial-token-id');
+
+  await room.dm.page.goto(`/v2.html#session/${room.hosted.session}`);
+  const canvas = room.dm.page.locator('.workspace-v2-canvas');
+  await expect(canvas).toBeVisible();
+  await expect.poll(() => canvas.evaluate((element, id) => {
+    const tokens = JSON.parse(element.dataset.sceneTokens || '[]');
+    return tokens.some(token => token.id === id && token.x === 5 && token.y === 6);
+  }, tokenId), { timeout: 20_000 }).toBe(true);
+
+  const hydrated = await actors.rpc(room.dm, 'get_session_snapshot', { p_session: room.hosted.session });
+  expect(hydrated.error).toBeNull();
+  const moved = await actors.rpc(room.dm, 'mutate_session', {
+    p_session: room.hosted.session,
+    p_command: {
+      schemaVersion: 1,
+      type: 'token.move',
+      expectedRevision: hydrated.data.revision,
+      payload: { tokenId, x: 9, y: 10 },
+    },
+  });
+  expect(moved.error).toBeNull();
+    await expect.poll(() => canvas.evaluate((element, id) => {
+      const tokens = JSON.parse(element.dataset.sceneTokens || '[]');
+      return tokens.some(token => token.id === id && token.x === 9 && token.y === 10);
+    }, tokenId), { timeout: 20_000 }).toBe(true);
+  });
 });

@@ -385,3 +385,25 @@ body,
 .workspace-radial[data-collapsed="true"] .workspace-radial__center {
   box-shadow: 0 0 0 4px rgb(218 190 105 / 12%), 0 10px 24px rgb(0 0 0 / 34%);
 }
+
+.workspace-v2-sync-status {
+  position: absolute;
+  z-index: 40;
+  top: 1rem;
+  left: 50%;
+  max-width: calc(100% - 2rem);
+  padding: 0.55rem 0.85rem;
+  border: 1px solid #4c5664;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  background: rgb(25 32 42 / 94%);
+  color: #dbe2eb;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 30%);
+  font-size: 0.82rem;
+}
+
+.workspace-v2-sync-status[data-tone="error"] {
+  border-color: #a44e4b;
+  background: rgb(67 31 32 / 96%);
+  color: #ffd4d1;
+}

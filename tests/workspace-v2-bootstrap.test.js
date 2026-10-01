@@ -36,3 +36,38 @@ test('starts the V2 demo without importing or mounting the legacy board', async 
   dom.window.close();
 });
 
+test('session route mounts realtime BoardView rendering and clears on denial', async () => {
+  const dom = new JSDOM('<main id="workspaceV2"></main>', {
+    url: 'https://example.test/v2.html#session/11111111-2222-4333-8444-555555555555',
+  });
+  const root = dom.window.document.querySelector('#workspaceV2');
+  const rendered = [];
+  let realtimeOptions;
+  const workspace = {
+    renderView: view => rendered.push(view),
+    setSyncStatus(message) {
+      root.dataset.syncMessage = message ?? '';
+    },
+  };
+
+  const result = await startWorkspaceV2({
+    root,
+    hash: '#session/11111111-2222-4333-8444-555555555555',
+    client: { authenticated: true },
+    mountWorkspace: async () => workspace,
+    mountRealtime: options => {
+      realtimeOptions = options;
+      return { stop() {} };
+    },
+  });
+
+  assert.equal(realtimeOptions.sessionId, '11111111-2222-4333-8444-555555555555');
+  const view = { revision: '3', tokens: [] };
+  realtimeOptions.onView(view);
+  assert.equal(rendered.at(-1), view);
+  realtimeOptions.onStatus('denied');
+  assert.equal(rendered.at(-1), null);
+  assert.equal(root.dataset.syncMessage, 'Access denied');
+  assert.equal(result.workspace, workspace);
+  dom.window.close();
+});

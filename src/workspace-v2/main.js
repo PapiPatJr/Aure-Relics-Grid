@@ -6,6 +6,16 @@ import { createSceneModel } from './sceneModel.js';
 import { createPanelManager } from './panelManager.js';
 import { mountWorkspaceChrome, TOP_BAR_LABELS } from './workspaceChrome.js';
 import { mountRadialMenu } from './radialMenu.js';
+import { mountRealtimeWorkspace } from './realtimeWorkspace.js';
+
+const DEMO_VIEW = {
+  revision: 'demo',
+  fog: { width: 40, height: 40 },
+  tokens: [
+    { id: 'demo-hero', label: 'Aria', kind: 'player', x: 8, y: 7, width: 1, height: 1, isVisible: true },
+    { id: 'demo-enemy', label: 'Goblin', kind: 'enemy', x: 13, y: 10, width: 1, height: 1, isVisible: true },
+  ],
+};
 
 export function parseWorkspaceRoute(hash = '') {
   if (hash === '#demo') return { mode: 'demo' };
@@ -26,7 +36,7 @@ function renderStatus(root, title, message) {
   root.append(section);
 }
 
-async function mountDemoWorkspace(root) {
+async function mountCanvasWorkspace(root, { initialView = DEMO_VIEW } = {}) {
   const panelManager = createPanelManager(TOP_BAR_LABELS.map(label => label.toLowerCase()));
   const chrome = mountWorkspaceChrome({ root, panelManager });
   const { shell, boardRoot: container } = chrome;
@@ -39,6 +49,7 @@ async function mountDemoWorkspace(root) {
       <button type="button" data-camera-action="fit" aria-label="Fit board">Fit</button>
       <button type="button" data-camera-action="hand" aria-label="Hand tool" aria-pressed="false">Hand</button>
     </div>
+    <div class="workspace-v2-sync-status" role="status" hidden></div>
   `;
   const stageContainer = shell.querySelector('.workspace-v2-stage');
 
@@ -55,14 +66,14 @@ async function mountDemoWorkspace(root) {
     { width, height },
   );
   const stageController = createWorkspaceStage({ container: stageContainer, width, height, camera });
-  stageController.render(createSceneModel({
-    revision: 'demo',
-    fog: { width: 40, height: 40 },
-    tokens: [
-      { id: 'demo-hero', label: 'Aria', kind: 'player', x: 8, y: 7, width: 1, height: 1, isVisible: true },
-      { id: 'demo-enemy', label: 'Goblin', kind: 'enemy', x: 13, y: 10, width: 1, height: 1, isVisible: true },
-    ],
-  }));
+  const renderView = view => {
+    const scene = createSceneModel(view);
+    stageController.render(scene);
+    container.dataset.sceneRevision = scene.revision ?? '';
+    container.dataset.sceneTokenIds = scene.tokens.map(token => token.id).join(',');
+    container.dataset.sceneTokens = JSON.stringify(scene.tokens.map(({ id, x, y }) => ({ id, x, y })));
+  };
+  renderView(initialView);
   let handMode = false;
   const zoomLabel = container.querySelector('[data-camera-action="reset"]');
   const handButton = container.querySelector('[data-camera-action="hand"]');
@@ -129,9 +140,18 @@ async function mountDemoWorkspace(root) {
   });
   observer.observe(container);
 
+  const syncStatus = container.querySelector('.workspace-v2-sync-status');
+  const setSyncStatus = (message, tone = 'neutral') => {
+    syncStatus.textContent = message ?? '';
+    syncStatus.dataset.tone = tone;
+    syncStatus.hidden = !message;
+  };
+
   return {
     shell,
     stageController,
+    renderView,
+    setSyncStatus,
     destroy() {
       observer.disconnect();
       removeCameraControls();
@@ -147,6 +167,8 @@ export async function startWorkspaceV2({
   root = globalThis.document?.getElementById('workspaceV2'),
   hash = globalThis.location?.hash ?? '#demo',
   client,
+  mountWorkspace = mountCanvasWorkspace,
+  mountRealtime = mountRealtimeWorkspace,
 } = {}) {
   if (!root) throw new Error('Workspace V2 requires a #workspaceV2 mount point.');
 
@@ -154,7 +176,7 @@ export async function startWorkspaceV2({
   root.dataset.workspaceMode = route.mode;
 
   if (route.mode === 'demo') {
-    const workspace = await mountDemoWorkspace(root);
+    const workspace = await mountWorkspace(root, { initialView: DEMO_VIEW });
     return { route, root, workspace };
   }
 
@@ -168,8 +190,32 @@ export async function startWorkspaceV2({
       renderStatus(root, 'Workspace unavailable', 'Session access requires Supabase configuration.');
       return { route, root, client: null };
     }
-    renderStatus(root, 'Aure Relics Workspace V2', `Session ${route.sessionId}`);
-    return { route, root, client: sessionClient };
+    const workspace = await mountWorkspace(root, { initialView: null });
+    workspace.setSyncStatus?.('Connecting…');
+    const realtime = mountRealtime({
+      client: sessionClient,
+      sessionId: route.sessionId,
+      onView(view) {
+        workspace.renderView?.(view);
+      },
+      onStatus(status) {
+        root.dataset.syncStatus = status;
+        if (status === 'denied') {
+          workspace.renderView?.(null);
+          workspace.setSyncStatus?.('Access denied', 'error');
+        } else if (status === 'synced') {
+          workspace.setSyncStatus?.(null);
+        } else if (status === 'error') {
+          workspace.setSyncStatus?.('Unable to synchronize', 'error');
+        } else {
+          workspace.setSyncStatus?.('Synchronizing…');
+        }
+      },
+      onError() {
+        workspace.setSyncStatus?.('Unable to synchronize', 'error');
+      },
+    });
+    return { route, root, client: sessionClient, workspace, realtime };
   }
 
   renderStatus(root, 'Workspace route not found', 'Use #demo or #session/<session-id>.');

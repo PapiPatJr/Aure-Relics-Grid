@@ -49,3 +49,45 @@ body,
 .workspace-v2-status p {
   color: #aeb7c4;
 }
+
+.workspace-v2-shell {
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  background: #11151c;
+}
+
+.workspace-v2-placeholder-bar {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0 1rem;
+  border-bottom: 1px solid #313844;
+  background: rgb(18 23 31 / 94%);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 22%);
+  text-transform: uppercase;
+}
+
+.workspace-v2-placeholder-bar strong {
+  color: #e7c873;
+  font-family: Georgia, serif;
+  letter-spacing: 0.09em;
+}
+
+.workspace-v2-placeholder-bar span {
+  color: #8e99a8;
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+}
+
+.workspace-v2-canvas {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  background: #0d1117;
+}

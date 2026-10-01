@@ -1,13 +1,16 @@
 const MODES = new Set(['dropdown', 'dock-left', 'dock-right', 'floating', 'minimized', 'closed']);
 const DEFAULT_POSITION = Object.freeze({ x: 96, y: 84 });
 
-function normalizePanel(input) {
+function normalizePanel(input, index = 0) {
   const descriptor = typeof input === 'string' ? { id: input } : input;
   if (!descriptor || typeof descriptor.id !== 'string' || !descriptor.id.trim()) return null;
   const mode = MODES.has(descriptor.mode) ? descriptor.mode : 'closed';
   const position = descriptor.position && Number.isFinite(descriptor.position.x) && Number.isFinite(descriptor.position.y)
     ? { x: descriptor.position.x, y: descriptor.position.y }
-    : { ...DEFAULT_POSITION };
+    : {
+        x: DEFAULT_POSITION.x + (index % 6) * 28,
+        y: DEFAULT_POSITION.y + (index % 6) * 24,
+      };
   return {
     id: descriptor.id,
     mode,
@@ -19,8 +22,8 @@ function normalizePanel(input) {
 export function createPanelManager(initialPanels = []) {
   const panels = new Map();
   const listeners = new Set();
-  for (const input of initialPanels) {
-    const panel = normalizePanel(input);
+  for (const [index, input] of initialPanels.entries()) {
+    const panel = normalizePanel(input, index);
     if (panel) panels.set(panel.id, panel);
   }
 
@@ -94,4 +97,3 @@ export function createPanelManager(initialPanels = []) {
     },
   };
 }
-

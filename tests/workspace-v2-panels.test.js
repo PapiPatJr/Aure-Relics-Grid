@@ -37,6 +37,13 @@ test('floating panels retain their last safe position', () => {
   assert.deepEqual(panel(manager, 'fog').position, { x: 240, y: 135 });
 });
 
+test('panels receive staggered default floating positions', () => {
+  const manager = createPanelManager(['fog', 'tokens']);
+  manager.float('fog');
+  manager.float('tokens');
+  assert.notDeepEqual(panel(manager, 'fog').position, panel(manager, 'tokens').position);
+});
+
 test('minimize and open restore the preceding presentation mode', () => {
   const manager = createPanelManager(['fog']);
   manager.float('fog', { x: 90, y: 70 });
@@ -64,4 +71,3 @@ test('getState returns snapshots that cannot mutate manager state', () => {
   snapshot.panels[0].mode = 'closed';
   assert.equal(panel(manager, 'fog').mode, 'dock-left');
 });
-

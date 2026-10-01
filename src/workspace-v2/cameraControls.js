@@ -63,10 +63,14 @@ export function attachCameraControls({
     const point = pointFromEvent(element, event);
     if (event.pointerType === 'touch') {
       pointers.set(event.pointerId, point);
-      capturePointer(element, event.pointerId);
       if (pointers.size === 2) {
         const [first, second] = pointers.values();
-        touchGesture = { center: midpoint(first, second), distance: distance(first, second) };
+        for (const pointerId of pointers.keys()) capturePointer(element, pointerId);
+        touchGesture = { type: 'pinch', center: midpoint(first, second), distance: distance(first, second) };
+        event.preventDefault();
+      } else if (isHandMode()) {
+        capturePointer(element, event.pointerId);
+        touchGesture = { type: 'pan', pointerId: event.pointerId, point };
         event.preventDefault();
       }
       return;
@@ -83,12 +87,27 @@ export function attachCameraControls({
     const point = pointFromEvent(element, event);
     if (event.pointerType === 'touch' && pointers.has(event.pointerId)) {
       pointers.set(event.pointerId, point);
-      if (pointers.size < 2) return;
+      if (pointers.size === 1) {
+        if (!isHandMode()) return;
+        if (touchGesture?.type !== 'pan' || touchGesture.pointerId !== event.pointerId) {
+          touchGesture = { type: 'pan', pointerId: event.pointerId, point };
+          return;
+        }
+        setCamera(panBy(getCamera(), {
+          x: point.x - touchGesture.point.x,
+          y: point.y - touchGesture.point.y,
+        }));
+        touchGesture.point = point;
+        event.preventDefault();
+        return;
+      }
+
       const [first, second] = pointers.values();
       const center = midpoint(first, second);
       const nextDistance = distance(first, second);
-      if (!touchGesture || touchGesture.distance <= 0) {
-        touchGesture = { center, distance: nextDistance };
+      if (touchGesture?.type !== 'pinch' || touchGesture.distance <= 0) {
+        touchGesture = { type: 'pinch', center, distance: nextDistance };
+        event.preventDefault();
         return;
       }
       const camera = getCamera();
@@ -100,7 +119,7 @@ export function attachCameraControls({
         x: center.x - worldAnchor.x * clamped.zoom,
         y: center.y - worldAnchor.y * clamped.zoom,
       });
-      touchGesture = { center, distance: nextDistance };
+      touchGesture = { type: 'pinch', center, distance: nextDistance };
       event.preventDefault();
       return;
     }
@@ -117,7 +136,12 @@ export function attachCameraControls({
   function onPointerEnd(event) {
     if (event.pointerType === 'touch') {
       pointers.delete(event.pointerId);
-      touchGesture = null;
+      if (pointers.size === 1 && isHandMode()) {
+        const [pointerId, point] = pointers.entries().next().value;
+        touchGesture = { type: 'pan', pointerId, point };
+      } else {
+        touchGesture = null;
+      }
     }
     if (mousePan?.pointerId === event.pointerId) mousePan = null;
   }

@@ -1,7 +1,31 @@
 const TOP_BAR_LABELS = ['Party', 'Encounter', 'Tokens', 'Terrain', 'Map', 'Fog', 'Measure', 'Notes', 'Session', 'View'];
+const PANEL_EDGE_MARGIN = 8;
 
 function slug(label) {
   return label.toLowerCase();
+}
+
+function clamp(value, minimum, maximum) {
+  return Math.min(Math.max(minimum, value), Math.max(minimum, maximum));
+}
+
+function clampFloatingPosition(position, panel, container) {
+  const width = container.clientWidth || container.getBoundingClientRect().width;
+  const height = container.clientHeight || container.getBoundingClientRect().height;
+  const panelWidth = panel.offsetWidth || panel.getBoundingClientRect().width;
+  const panelHeight = panel.offsetHeight || panel.getBoundingClientRect().height;
+  return {
+    x: clamp(position.x, PANEL_EDGE_MARGIN, width - panelWidth - PANEL_EDGE_MARGIN),
+    y: clamp(position.y, PANEL_EDGE_MARGIN, height - panelHeight - PANEL_EDGE_MARGIN),
+  };
+}
+
+function capturePointer(element, pointerId) {
+  try {
+    element.setPointerCapture?.(pointerId);
+  } catch {
+    // Synthetic pointer input and older touch implementations may not support capture.
+  }
 }
 
 function panelElement(document, descriptor) {
@@ -65,6 +89,7 @@ export function mountWorkspaceChrome({ root, panelManager, onToolSelect = () => 
   const overlay = shell.querySelector('.workspace-v2-panel-overlay');
   const minimized = shell.querySelector('.workspace-v2-minimized');
   const labels = new Map(TOP_BAR_LABELS.map(label => [slug(label), label]));
+  let panelDrag = null;
 
   function render(state = panelManager.getState()) {
     leftDock.replaceChildren();
@@ -94,6 +119,11 @@ export function mountWorkspaceChrome({ root, panelManager, onToolSelect = () => 
         rightDock.append(panel);
       } else {
         overlay.append(panel);
+        if (descriptor.mode === 'floating') {
+          const position = clampFloatingPosition(descriptor.position, panel, overlay);
+          panel.style.left = `${position.x}px`;
+          panel.style.top = `${position.y}px`;
+        }
       }
     }
 
@@ -131,7 +161,71 @@ export function mountWorkspaceChrome({ root, panelManager, onToolSelect = () => 
     if (action === 'close') panelManager.close(id);
   }
 
+  function handlePointerDown(event) {
+    const header = event.target.closest('.workspace-panel--floating .workspace-panel__header');
+    if (!header || event.target.closest('button, input, select, textarea')) return;
+    const panel = header.closest('[data-panel-id]');
+    const overlayRect = overlay.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    panelDrag = {
+      id: panel.dataset.panelId,
+      panel,
+      pointerId: event.pointerId,
+      origin: { x: event.clientX, y: event.clientY },
+      position: { x: panelRect.left - overlayRect.left, y: panelRect.top - overlayRect.top },
+      nextPosition: { x: panelRect.left - overlayRect.left, y: panelRect.top - overlayRect.top },
+    };
+    capturePointer(header, event.pointerId);
+    event.preventDefault();
+  }
+
+  function handlePointerMove(event) {
+    if (!panelDrag || panelDrag.pointerId !== event.pointerId) return;
+    const position = clampFloatingPosition({
+      x: panelDrag.position.x + event.clientX - panelDrag.origin.x,
+      y: panelDrag.position.y + event.clientY - panelDrag.origin.y,
+    }, panelDrag.panel, overlay);
+    panelDrag.nextPosition = position;
+    panelDrag.panel.style.left = `${position.x}px`;
+    panelDrag.panel.style.top = `${position.y}px`;
+    event.preventDefault();
+  }
+
+  function handlePointerEnd(event) {
+    if (!panelDrag || panelDrag.pointerId !== event.pointerId) return;
+    const { id, nextPosition } = panelDrag;
+    panelDrag = null;
+    panelManager.float(id, nextPosition);
+  }
+
+  let resizeFrame = null;
+  function handleResize() {
+    if (resizeFrame !== null) document.defaultView.cancelAnimationFrame(resizeFrame);
+    resizeFrame = document.defaultView.requestAnimationFrame(() => {
+      resizeFrame = null;
+      const state = panelManager.getState();
+      const updates = [];
+      for (const panel of overlay.querySelectorAll('.workspace-panel--floating')) {
+        const descriptor = state.panels.find(item => item.id === panel.dataset.panelId);
+        if (!descriptor) continue;
+        const overlayRect = overlay.getBoundingClientRect();
+        const panelRect = panel.getBoundingClientRect();
+        const current = { x: panelRect.left - overlayRect.left, y: panelRect.top - overlayRect.top };
+        const clamped = clampFloatingPosition(current, panel, overlay);
+        if (clamped.x !== descriptor.position.x || clamped.y !== descriptor.position.y) {
+          updates.push({ id: descriptor.id, position: clamped });
+        }
+      }
+      for (const update of updates) panelManager.float(update.id, update.position);
+    });
+  }
+
   shell.addEventListener('click', handleClick);
+  shell.addEventListener('pointerdown', handlePointerDown);
+  shell.addEventListener('pointermove', handlePointerMove);
+  shell.addEventListener('pointerup', handlePointerEnd);
+  shell.addEventListener('pointercancel', handlePointerEnd);
+  document.defaultView.addEventListener('resize', handleResize);
   const unsubscribe = panelManager.subscribe(render);
   render();
 
@@ -142,6 +236,12 @@ export function mountWorkspaceChrome({ root, panelManager, onToolSelect = () => 
     destroy() {
       unsubscribe();
       shell.removeEventListener('click', handleClick);
+      shell.removeEventListener('pointerdown', handlePointerDown);
+      shell.removeEventListener('pointermove', handlePointerMove);
+      shell.removeEventListener('pointerup', handlePointerEnd);
+      shell.removeEventListener('pointercancel', handlePointerEnd);
+      document.defaultView.removeEventListener('resize', handleResize);
+      if (resizeFrame !== null) document.defaultView.cancelAnimationFrame(resizeFrame);
       shell.remove();
     },
   };

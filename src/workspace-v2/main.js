@@ -100,7 +100,7 @@ async function mountCanvasWorkspace(root, { initialView = DEMO_VIEW } = {}) {
   setCamera(camera);
 
   const removeCameraControls = attachCameraControls({
-    element: container,
+    element: stageContainer,
     getCamera: () => camera,
     setCamera,
     screenToWorld,

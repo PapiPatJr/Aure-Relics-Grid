@@ -234,6 +234,12 @@ body,
   border-bottom: 1px solid #36404d;
 }
 
+.workspace-panel--floating .workspace-panel__header {
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+
 .workspace-panel__header strong {
   color: #edcf7b;
 }
@@ -356,6 +362,10 @@ body,
   pointer-events: auto;
   user-select: none;
   touch-action: none;
+}
+
+.workspace-radial button[hidden] {
+  display: none;
 }
 
 .workspace-radial__tool {

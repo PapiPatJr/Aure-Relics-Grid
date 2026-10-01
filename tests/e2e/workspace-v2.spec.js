@@ -95,7 +95,7 @@ test('camera controls reset, fit, and activate Hand mode without resetting on re
 });
 
 test('two-touch pinch zooms while a released one-finger gesture stays reserved for tools', async ({ page }) => {
-  const board = page.locator('.workspace-v2-canvas');
+  const board = page.locator('.workspace-v2-stage');
   const box = await board.boundingBox();
   const dispatch = (type, pointerId, x, y) => board.dispatchEvent(type, {
     pointerId,
@@ -131,6 +131,7 @@ test('two-touch pinch zooms while a released one-finger gesture stays reserved f
 test('Fog panel can dropdown, dock, float, minimize, restore, and close without losing the board', async ({ page, viewport }) => {
   const board = page.locator('.workspace-v2-canvas');
   const initialWidth = (await board.boundingBox()).width;
+  let expectedBoardWidth = initialWidth;
   await page.getByRole('navigation', { name: 'Workspace tools' }).getByRole('button', { name: 'Fog', exact: true }).click();
   const panel = page.getByRole('complementary', { name: 'Fog panel' });
   await expect(panel).toHaveAttribute('data-panel-mode', 'dropdown');
@@ -146,6 +147,24 @@ test('Fog panel can dropdown, dock, float, minimize, restore, and close without 
 
   await panel.getByRole('button', { name: 'Float panel' }).click();
   await expect(panel).toHaveAttribute('data-panel-mode', 'floating');
+  if (viewport.width > 1100) {
+    const beforeDrag = await panel.boundingBox();
+    const header = await panel.locator('.workspace-panel__header').boundingBox();
+    await drag(page,
+      { x: header.x + 40, y: header.y + header.height / 2 },
+      { x: viewport.width - 90, y: viewport.height - 90 });
+    const afterDrag = await panel.boundingBox();
+    expect(afterDrag.x).toBeGreaterThan(beforeDrag.x);
+    expect(afterDrag.y).toBeGreaterThan(beforeDrag.y);
+
+    await page.setViewportSize({ width: 800, height: 620 });
+    expectedBoardWidth = 800;
+    const afterResize = await panel.boundingBox();
+    expect(afterResize.x).toBeGreaterThanOrEqual(0);
+    expect(afterResize.y).toBeGreaterThanOrEqual(52);
+    expect(afterResize.x + afterResize.width).toBeLessThanOrEqual(800);
+    expect(afterResize.y + afterResize.height).toBeLessThanOrEqual(620);
+  }
   await panel.getByRole('button', { name: 'Minimize panel' }).click();
   await expect(panel).toHaveCount(0);
   await page.getByRole('button', { name: 'Restore Fog panel' }).click();
@@ -153,7 +172,7 @@ test('Fog panel can dropdown, dock, float, minimize, restore, and close without 
   await panel.getByRole('button', { name: 'Close panel' }).click();
   await expect(panel).toHaveCount(0);
   await expect(board).toBeVisible();
-  await expect.poll(async () => (await board.boundingBox()).width).toBeGreaterThanOrEqual(initialWidth - 1);
+  await expect.poll(async () => (await board.boundingBox()).width).toBeGreaterThanOrEqual(expectedBoardWidth - 1);
 });
 
 test('quick-tool menu drags, collapses, expands, and activates Pan', async ({ page }) => {
@@ -167,12 +186,71 @@ test('quick-tool menu drags, collapses, expands, and activates Pan', async ({ pa
 
   await center.click();
   await expect(menu).toHaveAttribute('data-collapsed', 'true');
+  await expect(page.locator('[data-radial-tool]:visible')).toHaveCount(0);
   await center.click();
   await expect(menu).toHaveAttribute('data-collapsed', 'false');
   const pan = page.getByRole('button', { name: 'Pan', exact: true });
   await pan.click();
   await expect(pan).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.workspace-v2-canvas')).toHaveAttribute('data-hand-mode', 'true');
+
+  const cameraBeforeControlDrag = await readCamera(page);
+  const menuBeforeControlDrag = await menu.evaluate(element => ({
+    x: Number(element.dataset.x),
+    y: Number(element.dataset.y),
+  }));
+  const panCenterBox = await center.boundingBox();
+  const start = { x: panCenterBox.x + panCenterBox.width / 2, y: panCenterBox.y + panCenterBox.height / 2 };
+  const dispatchCenterTouch = (type, x, y) => center.dispatchEvent(type, {
+    pointerId: 51,
+    pointerType: 'touch',
+    isPrimary: true,
+    button: 0,
+    buttons: type === 'pointerup' ? 0 : 1,
+    clientX: x,
+    clientY: y,
+    bubbles: true,
+  });
+  await dispatchCenterTouch('pointerdown', start.x, start.y);
+  await dispatchCenterTouch('pointermove', start.x + 70, start.y + 35);
+  await dispatchCenterTouch('pointerup', start.x + 70, start.y + 35);
+  expect(await readCamera(page)).toEqual(cameraBeforeControlDrag);
+  await expect.poll(() => menu.evaluate(element => Number(element.dataset.x))).toBeGreaterThan(menuBeforeControlDrag.x);
+
+  const select = page.getByRole('button', { name: 'Select', exact: true });
+  await select.click();
+  await expect(select).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.workspace-v2-canvas')).toHaveAttribute('data-hand-mode', 'false');
+});
+
+test('Hand mode pans with one touch while Select reserves one touch for tools', async ({ page }) => {
+  const stage = page.locator('.workspace-v2-stage');
+  const box = await stage.boundingBox();
+  const dispatch = (type, pointerId, x, y) => stage.dispatchEvent(type, {
+    pointerId,
+    pointerType: 'touch',
+    isPrimary: true,
+    button: 0,
+    buttons: type === 'pointerup' ? 0 : 1,
+    clientX: x,
+    clientY: y,
+    bubbles: true,
+  });
+  const start = { x: box.x + 250, y: box.y + 240 };
+  const before = await readCamera(page);
+
+  await dispatch('pointerdown', 41, start.x, start.y);
+  await dispatch('pointermove', 41, start.x + 70, start.y + 30);
+  await dispatch('pointerup', 41, start.x + 70, start.y + 30);
+  expect(await readCamera(page)).toEqual(before);
+
+  await page.getByRole('button', { name: 'Hand tool' }).click();
+  await dispatch('pointerdown', 42, start.x, start.y);
+  await dispatch('pointermove', 42, start.x + 70, start.y + 30);
+  await dispatch('pointerup', 42, start.x + 70, start.y + 30);
+  const after = await readCamera(page);
+  expect(after.x - before.x).toBeCloseTo(70, 0);
+  expect(after.y - before.y).toBeCloseTo(30, 0);
 });
 
 test('responsive matrix keeps canvas, panels, radial menu, and world tokens usable', async ({ page, viewport }) => {

@@ -91,3 +91,48 @@ body,
   touch-action: none;
   background: #0d1117;
 }
+
+.workspace-v2-stage {
+  position: absolute;
+  inset: 0;
+}
+
+.workspace-v2-canvas.is-hand-mode,
+.workspace-v2-canvas.is-hand-mode canvas {
+  cursor: grab;
+}
+
+.workspace-v2-camera-controls {
+  position: absolute;
+  z-index: 15;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.3rem;
+  border: 1px solid #3a4350;
+  border-radius: 0.75rem;
+  background: rgb(21 27 36 / 92%);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 28%);
+}
+
+.workspace-v2-camera-controls button {
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.65rem;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: #e6eaf0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-v2-camera-controls button:hover,
+.workspace-v2-camera-controls button:focus-visible,
+.workspace-v2-camera-controls button[aria-pressed="true"] {
+  outline: none;
+  background: #344050;
+  color: #f0d17d;
+}

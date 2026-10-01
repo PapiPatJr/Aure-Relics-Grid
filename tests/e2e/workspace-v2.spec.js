@@ -50,7 +50,7 @@ test('wheel zoom keeps the world coordinate beneath the cursor anchored', async 
 
 test('middle drag and Space plus left drag pan while normal left click does not', async ({ page }) => {
   const box = await page.locator('.workspace-v2-canvas').boundingBox();
-  const start = { x: box.x + 160, y: box.y + 170 };
+  const start = { x: box.x + box.width * 0.55, y: box.y + box.height * 0.6 };
   const initial = await readCamera(page);
 
   await page.mouse.click(start.x, start.y);
@@ -130,7 +130,7 @@ test('two-touch pinch zooms while a released one-finger gesture stays reserved f
 test('Fog panel can dropdown, dock, float, minimize, restore, and close without losing the board', async ({ page }) => {
   const board = page.locator('.workspace-v2-canvas');
   const initialWidth = (await board.boundingBox()).width;
-  await page.getByRole('button', { name: 'Fog', exact: true }).click();
+  await page.getByRole('navigation', { name: 'Workspace tools' }).getByRole('button', { name: 'Fog', exact: true }).click();
   const panel = page.getByRole('complementary', { name: 'Fog panel' });
   await expect(panel).toHaveAttribute('data-panel-mode', 'dropdown');
 
@@ -149,4 +149,23 @@ test('Fog panel can dropdown, dock, float, minimize, restore, and close without 
   await expect(panel).toHaveCount(0);
   await expect(board).toBeVisible();
   await expect.poll(async () => (await board.boundingBox()).width).toBeGreaterThanOrEqual(initialWidth - 1);
+});
+
+test('quick-tool menu drags, collapses, expands, and activates Pan', async ({ page }) => {
+  const menu = page.getByRole('toolbar', { name: 'Quick tools' });
+  await expect(menu).toBeVisible();
+  const center = page.getByRole('button', { name: 'Toggle quick tools' });
+  const box = await center.boundingBox();
+  const before = await menu.evaluate(element => ({ x: Number(element.dataset.x), y: Number(element.dataset.y) }));
+  await drag(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 }, { x: box.x + 90, y: box.y + 55 });
+  await expect.poll(() => menu.evaluate(element => Number(element.dataset.x))).toBeGreaterThan(before.x);
+
+  await center.click();
+  await expect(menu).toHaveAttribute('data-collapsed', 'true');
+  await center.click();
+  await expect(menu).toHaveAttribute('data-collapsed', 'false');
+  const pan = page.getByRole('button', { name: 'Pan', exact: true });
+  await pan.click();
+  await expect(pan).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.workspace-v2-canvas')).toHaveAttribute('data-hand-mode', 'true');
 });

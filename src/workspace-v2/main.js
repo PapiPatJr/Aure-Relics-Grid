@@ -5,6 +5,7 @@ import { attachCameraControls } from './cameraControls.js';
 import { createSceneModel } from './sceneModel.js';
 import { createPanelManager } from './panelManager.js';
 import { mountWorkspaceChrome, TOP_BAR_LABELS } from './workspaceChrome.js';
+import { mountRadialMenu } from './radialMenu.js';
 
 export function parseWorkspaceRoute(hash = '') {
   if (hash === '#demo') return { mode: 'demo' };
@@ -65,6 +66,12 @@ async function mountDemoWorkspace(root) {
   let handMode = false;
   const zoomLabel = container.querySelector('[data-camera-action="reset"]');
   const handButton = container.querySelector('[data-camera-action="hand"]');
+  const setHandMode = active => {
+    handMode = active;
+    handButton.setAttribute('aria-pressed', String(handMode));
+    container.dataset.handMode = String(handMode);
+    container.classList.toggle('is-hand-mode', handMode);
+  };
   const setCamera = nextCamera => {
     camera = createCamera(nextCamera);
     stageController.setCamera(camera);
@@ -96,14 +103,25 @@ async function mountDemoWorkspace(root) {
     if (action === 'out') setCamera(zoomAt(camera, viewportCenter(), camera.zoom / 1.25));
     if (action === 'reset') setCamera(zoomAt(camera, viewportCenter(), 1));
     if (action === 'fit') setCamera(fitCamera());
-    if (action === 'hand') {
-      handMode = !handMode;
-      handButton.setAttribute('aria-pressed', String(handMode));
-      container.dataset.handMode = String(handMode);
-      container.classList.toggle('is-hand-mode', handMode);
-    }
+    if (action === 'hand') setHandMode(!handMode);
   };
   container.addEventListener('click', onToolbarClick);
+  setHandMode(false);
+
+  const radialMenu = mountRadialMenu({
+    root: container,
+    tools: [
+      { id: 'select', label: 'Select' },
+      { id: 'token', label: 'Token' },
+      { id: 'fog', label: 'Fog' },
+      { id: 'measure', label: 'Measure' },
+      { id: 'pan', label: 'Pan' },
+    ],
+    activeTool: 'select',
+    onSelect(tool) {
+      setHandMode(tool === 'pan');
+    },
+  });
 
   const observer = new ResizeObserver(entries => {
     const rect = entries[0]?.contentRect;
@@ -118,6 +136,7 @@ async function mountDemoWorkspace(root) {
       observer.disconnect();
       removeCameraControls();
       container.removeEventListener('click', onToolbarClick);
+      radialMenu.destroy();
       stageController.destroy();
       chrome.destroy();
     },

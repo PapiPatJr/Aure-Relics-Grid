@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite';
+import { resolve } from 'node:path';
 
 const legacyScriptTag = '<script src="script.js"></script>';
 const viteModuleScriptTag = '<script type="module" src="/src/main.js"></script>';
 
 export default defineConfig({
-  appType: 'spa',
+  appType: 'mpa',
   plugins: [
     {
       name: 'aure-relics-legacy-entry-bridge',
@@ -23,7 +24,13 @@ export default defineConfig({
     outDir: 'dist',
     assetsDir: 'assets',
     emptyOutDir: true,
-    sourcemap: true
+    sourcemap: true,
+    rollupOptions: {
+      input: {
+        app: resolve(import.meta.dirname, 'index.html'),
+        workspaceV2: resolve(import.meta.dirname, 'v2.html')
+      }
+    }
   },
   server: {
     host: '127.0.0.1',

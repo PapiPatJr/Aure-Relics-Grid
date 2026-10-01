@@ -1,0 +1,51 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #11151c;
+  color: #f5f1e8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#workspaceV2 {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.workspace-v2-page {
+  background:
+    radial-gradient(circle at 50% 30%, rgb(55 65 81 / 35%), transparent 45%),
+    #11151c;
+}
+
+.workspace-v2-status {
+  display: grid;
+  min-height: 100%;
+  place-content: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.workspace-v2-status h1,
+.workspace-v2-status p {
+  margin: 0;
+}
+
+.workspace-v2-status h1 {
+  color: #e7c873;
+  font-family: Georgia, serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workspace-v2-status p {
+  color: #aeb7c4;
+}

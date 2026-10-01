@@ -32,7 +32,8 @@
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.116.0"
+    "@supabase/supabase-js": "2.116.0",
+    "konva": "10.7.0"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

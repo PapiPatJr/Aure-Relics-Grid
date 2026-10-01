@@ -3,6 +3,8 @@ const SESSION_ROUTE = /^#session\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89a
 import { createCamera, fitBounds, screenToWorld, zoomAt } from './camera.js';
 import { attachCameraControls } from './cameraControls.js';
 import { createSceneModel } from './sceneModel.js';
+import { createPanelManager } from './panelManager.js';
+import { mountWorkspaceChrome, TOP_BAR_LABELS } from './workspaceChrome.js';
 
 export function parseWorkspaceRoute(hash = '') {
   if (hash === '#demo') return { mode: 'demo' };
@@ -24,26 +26,19 @@ function renderStatus(root, title, message) {
 }
 
 async function mountDemoWorkspace(root) {
-  root.replaceChildren();
-  const shell = root.ownerDocument.createElement('section');
-  shell.className = 'workspace-v2-shell';
-  shell.innerHTML = `
-    <header class="workspace-v2-placeholder-bar">
-      <strong>Aure Relics</strong><span>Workspace V2</span>
-    </header>
-    <div class="workspace-v2-canvas" aria-label="Aure Relics board canvas">
-      <div class="workspace-v2-stage"></div>
-      <div class="workspace-v2-camera-controls" role="toolbar" aria-label="Board camera">
-        <button type="button" data-camera-action="out" aria-label="Zoom out">−</button>
-        <button type="button" data-camera-action="reset" aria-label="Reset zoom to 100%">100%</button>
-        <button type="button" data-camera-action="in" aria-label="Zoom in">+</button>
-        <button type="button" data-camera-action="fit" aria-label="Fit board">Fit</button>
-        <button type="button" data-camera-action="hand" aria-label="Hand tool" aria-pressed="false">Hand</button>
-      </div>
+  const panelManager = createPanelManager(TOP_BAR_LABELS.map(label => label.toLowerCase()));
+  const chrome = mountWorkspaceChrome({ root, panelManager });
+  const { shell, boardRoot: container } = chrome;
+  container.innerHTML = `
+    <div class="workspace-v2-stage"></div>
+    <div class="workspace-v2-camera-controls" role="toolbar" aria-label="Board camera">
+      <button type="button" data-camera-action="out" aria-label="Zoom out">−</button>
+      <button type="button" data-camera-action="reset" aria-label="Reset zoom to 100%">100%</button>
+      <button type="button" data-camera-action="in" aria-label="Zoom in">+</button>
+      <button type="button" data-camera-action="fit" aria-label="Fit board">Fit</button>
+      <button type="button" data-camera-action="hand" aria-label="Hand tool" aria-pressed="false">Hand</button>
     </div>
   `;
-  root.append(shell);
-  const container = shell.querySelector('.workspace-v2-canvas');
   const stageContainer = shell.querySelector('.workspace-v2-stage');
 
   if (typeof ResizeObserver === 'undefined') return { shell, stageController: null };
@@ -124,6 +119,7 @@ async function mountDemoWorkspace(root) {
       removeCameraControls();
       container.removeEventListener('click', onToolbarClick);
       stageController.destroy();
+      chrome.destroy();
     },
   };
 }

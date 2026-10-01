@@ -126,3 +126,27 @@ test('two-touch pinch zooms while a released one-finger gesture stays reserved f
   expect(await readCamera(page)).toEqual(pinched);
   await dispatch('pointerup', 3, left + 90, y + 40);
 });
+
+test('Fog panel can dropdown, dock, float, minimize, restore, and close without losing the board', async ({ page }) => {
+  const board = page.locator('.workspace-v2-canvas');
+  const initialWidth = (await board.boundingBox()).width;
+  await page.getByRole('button', { name: 'Fog', exact: true }).click();
+  const panel = page.getByRole('complementary', { name: 'Fog panel' });
+  await expect(panel).toHaveAttribute('data-panel-mode', 'dropdown');
+
+  await panel.getByRole('button', { name: 'Dock left' }).click();
+  await expect(panel).toHaveAttribute('data-panel-mode', 'dock-left');
+  await expect(board).toBeVisible();
+  await expect.poll(async () => (await board.boundingBox()).width).toBeLessThan(initialWidth);
+
+  await panel.getByRole('button', { name: 'Float panel' }).click();
+  await expect(panel).toHaveAttribute('data-panel-mode', 'floating');
+  await panel.getByRole('button', { name: 'Minimize panel' }).click();
+  await expect(panel).toHaveCount(0);
+  await page.getByRole('button', { name: 'Restore Fog panel' }).click();
+  await expect(panel).toHaveAttribute('data-panel-mode', 'floating');
+  await panel.getByRole('button', { name: 'Close panel' }).click();
+  await expect(panel).toHaveCount(0);
+  await expect(board).toBeVisible();
+  await expect.poll(async () => (await board.boundingBox()).width).toBeGreaterThanOrEqual(initialWidth - 1);
+});
